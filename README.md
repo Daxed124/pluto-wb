@@ -24,7 +24,8 @@ En **Registro diario → Subir estado de cuenta** eliges la tarjeta o cuenta y s
 - De cada movimiento solo se conservan **fecha, comercio, monto y categoría**. Antes de mostrarlos se quitan números de tarjeta y de cuenta, referencias, folios, RFC, CURP y correos. Las transferencias quedan solo como "Transferencia", sin el nombre de la persona.
 - Todo pasa por una pantalla de revisión: los pagos y abonos, y los movimientos que ya estaban anotados, vienen sin marcar. Puedes cambiar la categoría o el nombre del comercio. Nada se guarda hasta que tocas "Agregar".
 - Si el estado de cuenta es de una tarjeta, la app también propone actualizar el saldo, la tasa, el límite y los días de corte y pago, y agregar las compras a meses sin intereses que detecte.
-- Funciona con PDF que tienen texto, que es como los descargas de la banca en línea. Si el PDF es una foto o un escaneo, la app avisa que no puede leerlo. Cada banco usa un formato distinto: si alguno no se lee bien, los movimientos se pueden anotar a mano.
+- **Fotos y PDF escaneados:** se leen con reconocimiento de texto (OCR) usando [Tesseract.js](https://tesseract.projectnaptha.com/) dentro del navegador. La imagen tampoco sale de tu dispositivo. La primera vez se descargan de jsDelivr el lector y el idioma español, unos 6 MB. Después quedan en caché. Puedes subir varias fotos a la vez, una por página, hasta 12 archivos. Las fechas y los montos se pueden corregir en la pantalla de revisión, porque el OCR a veces confunde números. Funciona mejor con fotos de frente, con buena luz y sin sombras.
+- Cada banco usa un formato distinto. Si alguno no se lee bien, los movimientos se pueden anotar a mano.
 
 ## Archivos
 
@@ -74,7 +75,7 @@ Abre `http://localhost:8080` (versión pública) o `http://localhost:8080/person
 2. En el repositorio ve a **Settings → Pages**. En **Source** elige **Deploy from a branch**, rama `main`, carpeta `/ (root)`, y guarda.
 3. En uno o dos minutos las páginas estarán en las direcciones de la tabla de arriba.
 
-Cada vez que cambies algo y hagas `git push`, GitHub Pages actualiza el sitio.
+Cada vez que cambies algo y hagas `git push`, GitHub Pages actualiza el sitio. Si cambias `assets/app.js` o `assets/app.css`, sube también el número de `?v=` en `index.html` y `personal/index.html`. Así los navegadores descargan la versión nueva en lugar de usar la que tienen guardada.
 
 ## Antes de compartir la versión pública
 

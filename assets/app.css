@@ -295,8 +295,11 @@ main.wrap{padding-block:24px 40px;display:grid;gap:20px}
 .imp-sec .check{align-items:flex-start}
 .imp-sec .check input{margin-top:2px}
 .imp-tbl td{padding:6px 8px}
+.imp-tbl td:nth-child(2){min-width:140px}
 .imp-tbl td:nth-child(3){min-width:190px}
 .imp-tbl td:nth-child(4){min-width:160px}
+.imp-tbl td:nth-child(5){min-width:120px}
+.imp-tbl td:nth-child(5) .in{text-align:right}
 .imp-tbl tr.off td{opacity:.55}
 .imp-tbl input[type="checkbox"]{width:17px;height:17px;accent-color:var(--accent);margin:0}
 .in-sm{padding:6px 8px;font-size:14px}

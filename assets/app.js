@@ -770,14 +770,15 @@ function diarioHTML(){
     <p class="fld-h" id="d-msg" role="status"></p>
   </form>
   <article class="block" id="imp-block">
-    <header class="block-head"><h2>Subir estado de cuenta</h2><p class="label">PDF</p></header>
-    <p class="note-line">El archivo se lee aquí mismo, en tu navegador: no se sube a ningún servidor ni se guarda, y la app lo descarta en cuanto termina de leerlo. De cada gasto solo guardamos la fecha, el comercio, el monto y la categoría, y solo los que tú confirmes. Los números de tarjeta, referencias, RFC y nombres en transferencias se quitan antes.</p>
+    <header class="block-head"><h2>Subir estado de cuenta</h2><p class="label">PDF o fotos</p></header>
+    <p class="note-line">El archivo o las fotos se leen aquí mismo, en tu navegador: no se suben a ningún servidor ni se guardan, y la app los descarta en cuanto termina de leerlos. De cada gasto solo guardamos la fecha, el comercio, el monto y la categoría, y solo los que tú confirmes. Los números de tarjeta, referencias, RFC y nombres en transferencias se quitan antes.</p>
     <div class="imp-row">
       <label class="fld" for="imp-cuenta"><span class="fld-l">¿De qué tarjeta o cuenta es?</span><select class="in" id="imp-cuenta"></select></label>
-      <button class="btn" type="button" id="imp-elegir">Elegir PDF</button>
-      <input type="file" id="imp-file" accept="application/pdf,.pdf" hidden>
+      <button class="btn" type="button" id="imp-elegir">Elegir PDF o fotos</button>
+      <input type="file" id="imp-file" accept="application/pdf,.pdf,image/*" multiple hidden>
     </div>
-    <div class="imp-drop" id="imp-drop">o arrastra aquí tu estado de cuenta</div>
+    <div class="imp-drop" id="imp-drop">o arrastra aquí tu PDF o las fotos de tu estado de cuenta</div>
+    <p class="fld-h">Con fotos o PDF escaneados, la app reconoce el texto de la imagen. La primera vez descarga el lector (unos 6 MB) y tarda unos segundos por página. Para mejores resultados, toma la foto de frente, con buena luz y sin sombras. Si tienes varias páginas, súbelas juntas.</p>
     <form class="imp-clave" id="imp-clave" autocomplete="off" hidden>
       <p class="fld-h" id="imp-clave-msg"></p>
       <div class="cfg-row">
@@ -1528,7 +1529,7 @@ function cargarPdfjs(){
     .catch(() => { pdfjsProm = null; throw { tipo:'cdn' }; });
   return pdfjsProm;
 }
-async function lineasDePDF(bytes){
+async function lineasDePDF(bytes, avance){
   const pdfjs = await cargarPdfjs();
   const task = pdfjs.getDocument({ data:bytes, isEvalSupported:false, disableFontFace:true, enableXfa:false, stopAtErrors:false });
   task.onPassword = (update, reason) => {
@@ -1537,7 +1538,7 @@ async function lineasDePDF(bytes){
   let pdf = null;
   try {
     pdf = await task.promise;
-    const lineas = [];
+    const filas = [];
     for (let p = 1; p <= Math.min(pdf.numPages, 40); p++) {
       const page = await pdf.getPage(p);
       const tc = await page.getTextContent();
@@ -1545,16 +1546,114 @@ async function lineasDePDF(bytes){
       items.sort((a, b) => b.y - a.y || a.x - b.x);
       let cur = null;
       for (const it of items) {
-        if (!cur || Math.abs(cur.y - it.y) > 3) { cur = { y:it.y, partes:[] }; lineas.push(cur); }
+        if (!cur || Math.abs(cur.y - it.y) > 3) { cur = { y:it.y, partes:[] }; filas.push(cur); }
         cur.partes.push(it);
       }
       page.cleanup();
     }
-    return lineas.map(l => l.partes.sort((a, b) => a.x - b.x).map(p => p.s).join(' ').replace(/\s+/g, ' ').trim()).filter(Boolean);
+    const lineas = filas.map(l => l.partes.sort((a, b) => a.x - b.x).map(p => p.s).join(' ').replace(/\s+/g, ' ').trim()).filter(Boolean);
+    if (lineas.join('').replace(/\s/g, '').length >= 60) return { lineas, ocr:false };
+    // Sin texto: es un escaneo. Se dibuja cada página y se lee con reconocimiento de texto.
+    const n = Math.min(pdf.numPages, 10), worker = await crearOCR(avance), out = [];
+    try {
+      for (let p = 1; p <= n; p++) {
+        avance(`Este PDF es un escaneo. Leyendo la página ${p} de ${n}…`);
+        const page = await pdf.getPage(p);
+        const v1 = page.getViewport({ scale:1 }), vp = page.getViewport({ scale:Math.min(3, 2000 / v1.width) });
+        const cv = document.createElement('canvas');
+        cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
+        const ctx = cv.getContext('2d');
+        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+        await page.render({ canvasContext:ctx, viewport:vp }).promise;
+        try { out.push(...await ocrCanvas(worker, cv)); } finally { cv.width = 0; cv.height = 0; page.cleanup(); }
+      }
+    } finally { Promise.resolve(worker.terminate()).catch(() => {}); }
+    return { lineas:out, ocr:true };
   } finally {
     try { if (pdf) await pdf.destroy(); } catch (e) {}
     try { await task.destroy(); } catch (e) {}
   }
+}
+
+/* Reconocimiento de texto (OCR) para fotos y escaneos, con Tesseract.js dentro del navegador. */
+const TESS_JS = 'https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/';
+const TESS_OPTS = {
+  workerPath: TESS_JS + 'worker.min.js',
+  corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@6.0.0',
+  langPath: 'https://cdn.jsdelivr.net/npm/@tesseract.js-data/spa@1.0.0/4.0.0_best_int'
+};
+let tessProm = null;
+function cargarTesseract(){
+  if (!tessProm) tessProm = new Promise((ok, err) => {
+    if (window.Tesseract) { ok(window.Tesseract); return; }
+    const s = document.createElement('script');
+    s.src = TESS_JS + 'tesseract.min.js'; s.async = true;
+    s.onload = () => window.Tesseract ? ok(window.Tesseract) : err({ tipo:'cdn' });
+    s.onerror = () => { tessProm = null; s.remove(); err({ tipo:'cdn' }); };
+    document.head.appendChild(s);
+  });
+  return tessProm;
+}
+async function crearOCR(avance){
+  const T = await cargarTesseract();
+  avance('Preparando el lector de imágenes (la primera vez descarga unos 6 MB)…');
+  try {
+    return await T.createWorker('spa', 1, Object.assign({ logger: m => { if (m && m.status === 'recognizing text') avance(null, m.progress); } }, TESS_OPTS));
+  } catch (e) { throw { tipo:'cdn' }; }
+}
+async function ocrCanvas(worker, cv){
+  const r = await worker.recognize(cv, {}, { text:true, blocks:true });
+  return lineasDeOCR(r.data || {});
+}
+// Corrige confusiones típicas del OCR en números: O por 0, l por 1, espacios dentro de montos, coma decimal.
+function limpiarOCR(s){
+  return s.replace(/[|]/g, ' ')
+    .replace(/^[lI](?=\d)/, '1')
+    .replace(/(\d)[Oo](?=\d)/g, (m, d) => d + '0').replace(/(\d)[Oo](?=\d)/g, (m, d) => d + '0')
+    .replace(/(\d)[lI](?=\d)/g, (m, d) => d + '1')
+    .replace(/\$\s+/g, '$')
+    .replace(/(\d)\s*,\s*(\d{3})(?!\d)/g, '$1,$2')
+    .replace(/(\d)\s*\.\s*(\d{2})(?!\d)/g, '$1.$2')
+    .replace(/(\d{1,3}(?:,\d{3})*),(\d{2})(?!\d)/g, '$1.$2')
+    .replace(/\s+/g, ' ').trim();
+}
+// Junta en una sola fila los renglones que el OCR separó por columnas (fecha, comercio, monto).
+function lineasDeOCR(data){
+  const ls = [];
+  (data.blocks || []).forEach(b => (b.paragraphs || []).forEach(p => (p.lines || []).forEach(l => {
+    const t = String(l.text || '').trim();
+    if (t && l.bbox) ls.push({ t, x0:l.bbox.x0, y0:l.bbox.y0, y1:l.bbox.y1 });
+  })));
+  if (!ls.length) return String(data.text || '').split('\n').map(limpiarOCR).filter(Boolean);
+  ls.sort((a, b) => (a.y0 + a.y1) - (b.y0 + b.y1));
+  const filas = [];
+  for (const l of ls) {
+    const yc = (l.y0 + l.y1) / 2, h = Math.max(1, l.y1 - l.y0), f = filas[filas.length - 1];
+    if (f && Math.abs(f.yc - yc) < Math.max(f.h, h) * 0.55) f.partes.push(l);
+    else filas.push({ yc, h, partes:[l] });
+  }
+  return filas.map(f => limpiarOCR(f.partes.sort((a, b) => a.x0 - b.x0).map(p => p.t).join(' '))).filter(Boolean);
+}
+async function canvasDeImagen(file){
+  let src;
+  try { src = await createImageBitmap(file); }
+  catch (e) {
+    src = await new Promise((ok, err) => {
+      const img = new Image(), url = URL.createObjectURL(file);
+      img.onload = () => { URL.revokeObjectURL(url); ok(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); err({ tipo:'imagen' }); };
+      img.src = url;
+    });
+  }
+  const w0 = src.width, h0 = src.height, k = Math.min(3200 / Math.max(w0, h0), Math.max(1, 2000 / w0));
+  const cv = document.createElement('canvas');
+  cv.width = Math.round(w0 * k); cv.height = Math.round(h0 * k);
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.filter = 'grayscale(1) contrast(1.25)';
+  ctx.drawImage(src, 0, 0, cv.width, cv.height);
+  if (src.close) src.close();
+  return cv;
 }
 function pedirClave(incorrecta){
   return new Promise(res => {
@@ -1690,38 +1789,59 @@ function analizarEstado(lineas, cuenta){
   if (res.limitePago) info.push('fecha límite ' + fechaCorta(res.limitePago));
   return { cuenta, movs, msi:msiNuevas, cambios, info:info.length ? 'Tu estado de cuenta dice: ' + info.join(' · ') + '.' : '' };
 }
-async function procesarArchivo(file){
-  const est = byId('imp-estado'), inp = byId('imp-file');
-  if (!file) return;
-  if (!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') { est.textContent = 'Solo podemos leer estados de cuenta en PDF.'; inp.value = ''; return; }
-  if (file.size > 25 * 1024 * 1024) { est.textContent = 'Ese PDF pesa más de 25 MB. Descarga de tu banco solo el estado de cuenta del mes.'; inp.value = ''; return; }
+const esPDF = f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
+const esImagen = f => /^image\//.test(f.type) || /\.(jpe?g|png|webp|bmp|gif|heic|heif)$/i.test(f.name);
+async function procesarArchivos(lista){
+  const est = byId('imp-estado'), files = Array.from(lista || []);
+  byId('imp-file').value = '';
+  if (!files.length) return;
+  if (files.length > 12) { est.textContent = 'Sube máximo 12 archivos a la vez.'; return; }
+  const malo = files.find(f => !esPDF(f) && !esImagen(f));
+  if (malo) { est.textContent = `No podemos leer “${malo.name}”. Sube un PDF o fotos en JPG o PNG.`; return; }
+  if (files.some(f => f.size > 25 * 1024 * 1024)) { est.textContent = 'Algún archivo pesa más de 25 MB. Descarga de tu banco solo el estado de cuenta del mes.'; return; }
   const cuenta = byId('imp-cuenta').value;
   imp = null; renderRevision();
-  est.textContent = 'Leyendo el estado de cuenta en tu navegador…';
-  let bytes = null, lineas = null;
+  let base = 'Leyendo en tu navegador…';
+  const avance = (msg, p) => { if (msg) base = msg; est.textContent = base + (p != null ? ' ' + Math.round(p * 100) + '%' : ''); };
+  avance(base);
+  let lineas = [], ocr = false, worker = null;
   try {
-    bytes = new Uint8Array(await file.arrayBuffer());
-    lineas = await lineasDePDF(bytes);
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      if (esPDF(f)) {
+        let bytes = new Uint8Array(await f.arrayBuffer());
+        try { const r = await lineasDePDF(bytes, avance); lineas = lineas.concat(r.lineas); ocr = ocr || r.ocr; }
+        finally { try { bytes.fill(0); } catch (e) {} bytes = null; }
+      } else {
+        if (!worker) worker = await crearOCR(avance);
+        avance(files.length > 1 ? `Leyendo la foto ${i + 1} de ${files.length}…` : 'Leyendo la foto…');
+        const cv = await canvasDeImagen(f);
+        try { lineas = lineas.concat(await ocrCanvas(worker, cv)); } finally { cv.width = 0; cv.height = 0; }
+        ocr = true;
+      }
+    }
   } catch (e) {
-    const nombre = e && e.name;
-    est.textContent = e && e.tipo === 'cdn' ? 'No pudimos cargar el lector de PDF. Revisa tu conexión a internet e intenta de nuevo.'
-      : nombre === 'PasswordException' ? 'No abrimos el archivo porque hace falta su contraseña.'
-      : 'No pudimos leer este PDF. Si es una foto o un escaneo, no tiene texto que la app pueda leer.';
+    est.textContent = e && e.tipo === 'cdn' ? 'No pudimos cargar el lector. Revisa tu conexión a internet e intenta de nuevo.'
+      : e && e.tipo === 'imagen' ? 'No pudimos abrir esa imagen. Usa fotos en JPG o PNG.'
+      : e && e.name === 'PasswordException' ? 'No abrimos el archivo porque hace falta su contraseña.'
+      : 'No pudimos leer el archivo. Intenta de nuevo o descarga de tu banco el estado de cuenta en PDF.';
     return;
   } finally {
-    try { if (bytes) bytes.fill(0); } catch (e) {}
-    bytes = null; inp.value = '';
+    if (worker) Promise.resolve(worker.terminate()).catch(() => {});
     if (claveResolver) claveResolver(null);
   }
-  if (!lineas.length) { est.textContent = 'Este PDF no tiene texto: parece una foto o un escaneo. Descarga de tu banco el estado de cuenta original.'; return; }
+  const plural2 = files.length > 1;
+  if (!lineas.length) { est.textContent = 'No encontramos texto. Si es una foto, tómala de frente, con buena luz y sin sombras.'; return; }
   const r = analizarEstado(lineas, cuenta);
   lineas.length = 0; lineas = null;
   if (!r.movs.length && !r.msi.length && !r.cambios.length) {
-    est.textContent = 'Leímos el archivo, pero no encontramos movimientos. Puede que tu banco use un formato que la app todavía no reconoce. El archivo ya se descartó.';
+    est.textContent = ocr
+      ? `Leímos ${plural2 ? 'las imágenes' : 'la imagen'}, pero no reconocimos movimientos. Prueba con una foto más nítida, de frente y con buena luz, o anótalos a mano. Ya ${plural2 ? 'se descartaron' : 'se descartó'}.`
+      : 'Leímos el archivo, pero no encontramos movimientos. Puede que tu banco use un formato que la app todavía no reconoce. El archivo ya se descartó.';
     return;
   }
-  imp = r;
-  est.textContent = 'Listo. El archivo ya se descartó; esto es lo que encontramos. Nada se guarda hasta que lo confirmes.';
+  r.ocr = ocr; imp = r;
+  est.textContent = `Listo. ${plural2 ? 'Los archivos ya se descartaron' : 'El archivo ya se descartó'}; esto es lo que encontramos. Nada se guarda hasta que lo confirmes.`;
   renderRevision();
 }
 function renderRevision(){
@@ -1735,6 +1855,7 @@ function renderRevision(){
     (ab.length ? ` y ${plural(ab.length, 'pago o abono', 'pagos o abonos')} que dejamos sin marcar` : '') +
     (dups.length ? `. ${dups.length === 1 ? 'Uno ya estaba' : dups.length + ' ya estaban'} en tu registro` : '') + '. Desmarca lo que no quieras agregar.</p>';
   if (imp.info) h += `<p class="fld-h">${esc(imp.info)}</p>`;
+  if (imp.ocr) h += `<p class="note-line">${chip('warn', 'Leído de una imagen')} Revisa las fechas y los montos antes de agregar: el reconocimiento de texto a veces confunde números, como un 8 con un 3.</p>`;
   if (c && imp.cambios.length) h += `<fieldset class="imp-sec"><legend class="fld-l">Actualizar ${esc(c.nombre || 'tu tarjeta')}</legend>` +
     imp.cambios.map((x, i) => `<label class="check"><input type="checkbox" data-impc="${i}"${x.on ? ' checked' : ''}><span>${esc(x.label)}: <b>${esc(x.txt)}</b> <span class="muted">(ahora ${esc(x.antes)})</span></span></label>`).join('') + '</fieldset>';
   if (c && imp.msi.length) h += `<fieldset class="imp-sec"><legend class="fld-l">Compras a meses sin intereses</legend>` +
@@ -1743,23 +1864,23 @@ function renderRevision(){
       <th><input type="checkbox" id="imp-todos" aria-label="Marcar todos los cargos"${g.every(m => m.on) ? ' checked' : ''}></th><th>Fecha</th><th>Comercio</th><th>Categoría</th><th class="n">Monto</th></tr></thead><tbody>` +
     imp.movs.map((m, i) => `<tr class="${m.on ? '' : 'off'}">
       <td><input type="checkbox" data-impm="${i}"${m.on ? ' checked' : ''} aria-label="Agregar ${esc(m.desc)}"></td>
-      <td class="nowrap">${esc(fechaCorta(parseISO(m.fecha)))}</td>
+      <td><input class="in in-sm" type="date" data-impf="${i}" value="${esc(m.fecha)}" aria-label="Fecha"></td>
       <td><input class="in in-sm" data-impd="${i}" value="${esc(m.desc)}" maxlength="60" aria-label="Comercio">${m.abono ? '<span class="tag">Pago o abono</span>' : ''}${m.dup ? '<span class="tag">Ya estaba anotado</span>' : ''}</td>
       <td><select class="in in-sm" data-impcat="${i}" aria-label="Categoría">${catOpts(m.cat)}</select></td>
-      <td class="n">${esc(m2(m.monto))}</td></tr>`).join('') + '</tbody></table></div>';
+      <td class="n"><input class="in in-sm num" type="number" inputmode="decimal" min="0" step="0.01" data-impmonto="${i}" value="${m.monto}" aria-label="Monto"></td></tr>`).join('') + '</tbody></table></div>';
   h += '<div class="imp-acc"><button class="btn" type="button" id="imp-ok"></button><button class="btn-quiet" type="button" id="imp-no">Descartar todo</button></div>';
   el.innerHTML = h;
   botonImp();
 }
 function botonImp(){
   const b = byId('imp-ok'); if (!b || !imp) return;
-  const sel = imp.movs.filter(m => m.on), extra = imp.cambios.some(x => x.on) || imp.msi.some(p => p.on);
+  const sel = imp.movs.filter(m => m.on && m.monto > 0), extra = imp.cambios.some(x => x.on) || imp.msi.some(p => p.on);
   b.textContent = sel.length ? `Agregar ${plural(sel.length, 'gasto', 'gastos')} (${m0(sum(sel, m => m.monto))})` : extra ? 'Actualizar mi tarjeta' : 'Nada marcado';
   b.disabled = !sel.length && !extra;
 }
 function confirmarImp(){
   if (!imp) return;
-  const sel = imp.movs.filter(m => m.on);
+  const sel = imp.movs.filter(m => m.on && m.monto > 0);
   sel.forEach(m => state.movimientos.push({ id:uid(), fecha:m.fecha, monto:m.monto, cat:m.cat, nota:limpiarDesc(m.desc), metodo:imp.cuenta, origen:'estado' }));
   const c = state.tarjetas.find(t => t.id === imp.cuenta);
   let nMsi = 0, nCamb = 0;
@@ -1822,13 +1943,15 @@ function impInput(el){
   if ('impm' in d) { const m = imp.movs[+d.impm]; if (m) { m.on = el.checked; el.closest('tr').className = m.on ? '' : 'off'; } }
   else if ('impd' in d) { const m = imp.movs[+d.impd]; if (m) m.desc = el.value.slice(0, 60); }
   else if ('impcat' in d) { const m = imp.movs[+d.impcat]; if (m) m.cat = el.value; }
+  else if ('impf' in d) { const m = imp.movs[+d.impf]; if (m && esISO(el.value)) m.fecha = el.value; }
+  else if ('impmonto' in d) { const m = imp.movs[+d.impmonto]; if (m) m.monto = Math.max(0, Math.round((Number(el.value) || 0) * 100) / 100); }
   else if ('impc' in d) { const x = imp.cambios[+d.impc]; if (x) x.on = el.checked; }
   else if ('impmsi' in d) { const p = imp.msi[+d.impmsi]; if (p) p.on = el.checked; }
   botonImp();
 }
 document.addEventListener('input', e => {
   const el = e.target;
-  if (el.id === 'imp-todos' || (el.dataset && ('impm' in el.dataset || 'impd' in el.dataset || 'impcat' in el.dataset || 'impc' in el.dataset || 'impmsi' in el.dataset))) { impInput(el); return; }
+  if (el.id === 'imp-todos' || (el.dataset && ['impm', 'impd', 'impcat', 'impc', 'impmsi', 'impf', 'impmonto'].some(k => k in el.dataset))) { impInput(el); return; }
   if (el.dataset && el.dataset.col) {
     const it = itemDe(el); if (!it) return;
     const k = el.dataset.k;
@@ -1856,7 +1979,7 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', e => {
   if (e.target.id === 'f-importar' && e.target.files && e.target.files[0]) { importar(e.target.files[0]); e.target.value = ''; }
-  if (e.target.id === 'imp-file' && e.target.files && e.target.files[0]) procesarArchivo(e.target.files[0]);
+  if (e.target.id === 'imp-file' && e.target.files && e.target.files.length) procesarArchivos(e.target.files);
 });
 document.addEventListener('submit', e => {
   if (e.target.id === 'imp-clave') { e.preventDefault(); if (claveResolver) claveResolver(byId('imp-clave-in').value); return; }
@@ -2021,7 +2144,7 @@ if (PERSONAL) {
   const zona = byId('imp-block'), marca = byId('imp-drop');
   ['dragenter', 'dragover'].forEach(ev => zona.addEventListener(ev, e => { e.preventDefault(); marca.classList.add('over'); }));
   ['dragleave', 'drop'].forEach(ev => zona.addEventListener(ev, e => { e.preventDefault(); marca.classList.remove('over'); }));
-  zona.addEventListener('drop', e => { const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if (f) procesarArchivo(f); });
+  zona.addEventListener('drop', e => { const fs = e.dataTransfer && e.dataTransfer.files; if (fs && fs.length) procesarArchivos(fs); });
 }
 document.querySelector('.tabs').addEventListener('keydown', e => {
   if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
