@@ -1564,7 +1564,8 @@ async function lineasDePDF(bytes, avance){
         cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
         const ctx = cv.getContext('2d');
         ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
-        await page.render({ canvasContext:ctx, viewport:vp }).promise;
+        // intent 'print' dibuja sin esperar a la pantalla: así sigue avanzando aunque cambies de pestaña.
+        await page.render({ canvasContext:ctx, viewport:vp, intent:'print' }).promise;
         try { out.push(...await ocrCanvas(worker, cv)); } finally { cv.width = 0; cv.height = 0; page.cleanup(); }
       }
     } finally { Promise.resolve(worker.terminate()).catch(() => {}); }
@@ -1609,6 +1610,7 @@ async function ocrCanvas(worker, cv){
 function limpiarOCR(s){
   return s.replace(/[|]/g, ' ')
     .replace(/^[lI](?=\d)/, '1')
+    .replace(/\b[Oo](?=\d[\-\/.])/g, '0')
     .replace(/(\d)[Oo](?=\d)/g, (m, d) => d + '0').replace(/(\d)[Oo](?=\d)/g, (m, d) => d + '0')
     .replace(/(\d)[lI](?=\d)/g, (m, d) => d + '1')
     .replace(/\$\s+/g, '$')
@@ -1675,9 +1677,10 @@ const montoDe = a => parseFloat(a[2].replace(/,/g, '') + '.' + a[3]);
 const RE_ABONO = /\b(SU PAGO|PAGO RECIBIDO|GRACIAS POR SU PAGO|PAGO TDC|PAGO A TARJETA|PAGO TARJETA|PAGO INTERBANCARIO|ABONO|DEVOLUCION|BONIFICACION|REEMBOLSO|CASHBACK|DEPOSITO|RECIBIDO|RECIBIDA|NOMINA|REVERSO|CANCELACION)\b/;
 const REGLAS_CAT = [
   ['Deudas y préstamos', /INTERES|COMISION|\bIVA\b|ANUALIDAD|CARGO POR|PENALIZA/],
-  ['Transporte', /UBER(?!\s*EATS)|DIDI(?!\s*FOOD)|CABIFY|PEMEX|GASOLIN|SHELL|MOBIL|\bBP\b|G500|OXXO GAS|HIDROSINA|CASETA|IAVE|TELEPEAJE|PASE URBANO|ESTACIONAM|\bMETRO\b|\bADO\b|VOLARIS|VIVA ?AEROBUS|AEROMEXICO|AUTOBUS/],
-  ['Comida', /WALMART|WAL-MART|SORIANA|CHEDRAUI|LA COMER|\bHEB\b|H-E-B|COSTCO|\bSAMS\b|SAM'S|SUPERAMA|AURRERA|CITY MARKET|FRESKO|OXXO|7-ELEVEN|7 ELEVEN|CIRCLE K|RESTAUR|TACO|STARBUCKS|UBER ?EATS|RAPPI|DIDI ?FOOD|DOMINO|MCDONALD|BURGER|\bKFC\b|LITTLE CAESAR|\bVIPS\b|\bTOKS\b|CAFE|PANADER|CARNICER|POLLO|PIZZA|SUSHI|\bSUPER\b|MERCADO\b/],
-  ['Servicios', /TELMEX|TELCEL|AT&T|MOVISTAR|\bIZZI\b|TOTALPLAY|MEGACABLE|\bCFE\b|\bSKY\b|\bAGUA\b|NATURGY|GAS NATURAL|\bBAIT\b|INTERNET/],
+  ['Otros', /MERCADO ?PAGO|MERCADO ?LIBRE|\bAMAZON\b(?!\s*PRIME)|PAYPAL/],
+  ['Transporte', /UBER(?!\s*EATS)|DIDI(?!\s*FOOD)|CABIFY|PEMEX|GASOLIN|SUPER ?SERV|SERV(ICIO)? ?GAS|SHELL|MOBIL|\bBP\b|G500|OXXO GAS|HIDROSINA|CASETA|IAVE|TELEPEAJE|PASE URBANO|ESTACIONAM|\bMETRO\b|\bADO\b|VOLARIS|VIVA ?AEROBUS|AEROMEXICO|AUTOBUS/],
+  ['Comida', /WALMART|WAL-MART|SORIANA|CHEDRAUI|LA COMER|\bHEB\b|H-E-B|COSTCO|\bSAMS\b|SAM'S|SUPERAMA|AURRERA|CITY MARKET|FRESKO|OXXO|7-ELEVEN|7 ELEVEN|CIRCLE K|RESTAUR|TACO|STARBUCKS|UBER ?EATS|RAPPI|DIDI ?FOOD|DOMINO|MCDONALD|BURGER|\bKFC\b|LITTLE C(AESAR)?\b|\bVIPS\b|\bTOKS\b|CAFE|PANADER|CARNICER|POLLO|PIZZA|SUSHI|\bSUPER\b|MERCADO\b/],
+  ['Servicios', /TELMEX|TELCEL|AT&T|MOVISTAR|\bIZZI\b|TOTALPLAY|MEGACABLE|\bCFE\b|\bSKY\b|\bAGUA\b|NATURGY|GAS NATURAL|\bBAIT\b|INTERNET|ANTHROPIC|CLAUDE|OPENAI|CHATGPT|MICROSOFT|ADOBE|DROPBOX|ICLOUD|GOOGLE ?ONE/],
   ['Entretenimiento', /NETFLIX|SPOTIFY|DISNEY|\bHBO\b|\bMAX\b|PRIME ?VIDEO|AMAZON PRIME|APPLE\.COM|GOOGLE|YOUTUBE|CINEPOLIS|CINEMEX|TICKETMASTER|STEAM|PLAYSTATION|XBOX|NINTENDO|\bBAR\b|CANTINA/],
   ['Salud', /FARMAC|BENAVIDES|SIMILARES|SAN PABLO|HOSPITAL|MEDIC|DOCTOR|LABORATORIO|CHOPO|DENTAL|OPTICA/],
   ['Ropa y cuidado personal', /LIVERPOOL|PALACIO DE HIERRO|SUBURBIA|\bZARA\b|H&M|C&A|SHEIN|\bNIKE\b|ADIDAS|PULL ?(AND|&) ?BEAR|BERSHKA|SEPHORA|ESTETIC|BARBER|PRICE SHOES|INNOVASPORT/],
@@ -1712,7 +1715,18 @@ function resumenEstado(texto){
   const ventana = re => { const m = re.exec(texto); return m ? texto.slice(m.index + m[0].length, m.index + m[0].length + 160) : null; };
   const monto = re => { const w = ventana(re); if (!w) return null; const a = reMontos().exec(w); return a ? montoDe(a) : null; };
   const fechaV = re => { const w = ventana(re); if (!w) return null; const a = RE_FECHA_EN.exec(w); return a ? fechaDe(a[1], a[2], a[3], hoy()) : null; };
-  const pctV = re => { const w = ventana(re); if (!w) return null; const a = /(\d{1,3}(?:\.\d{1,4})?)\s?%/.exec(w); const v = a ? parseFloat(a[1]) : null; return v > 0 && v < 200 ? v : null; };
+  // Salta porcentajes que son el CAT ("4.2% Sin IVA") y no la tasa de interés.
+  const pctV = re => {
+    const w = ventana(re); if (!w) return null;
+    const rp = /(\d{1,3}(?:\.\d{1,4})?)\s?%/g; let a;
+    while ((a = rp.exec(w))) {
+      if (/^\s*(sin|con)\s+iva/i.test(w.slice(a.index + a[0].length, a.index + a[0].length + 12))) continue;
+      if (/CAT[\s:.\d]*$/i.test(w.slice(Math.max(0, a.index - 10), a.index))) continue;
+      const v = parseFloat(a[1]);
+      if (v > 0 && v < 200) return v;
+    }
+    return null;
+  };
   return {
     pagoNoInt: monto(/pago\s+para\s+no\s+generar\s+intereses/i),
     pagoMin: monto(/pago\s+m[ií]nimo/i),
@@ -1725,6 +1739,8 @@ function resumenEstado(texto){
 }
 function lineaMovimiento(ln, ref){
   let s = ln.trim(), m = RE_FECHA_INI.exec(s), f = null;
+  // "4.2% Sin IVA" no es una fecha: se descartan porcentajes y números con punto sin año.
+  if (m && (/^\s*%/.test(s.slice(m[0].length)) || (!m[3] && /^\d+$/.test(m[2]) && m[0].includes('.')))) return null;
   if (m) f = fechaDe(m[1], m[2], m[3], ref);
   else { m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s); if (m) f = fechaDe(m[3], m[2], m[1], ref); }
   if (!f) return null;
@@ -1901,6 +1917,9 @@ function confirmarImp(){
   if (nMsi) partes.push(plural(nMsi, 'compra a meses', 'compras a meses'));
   toast((partes.length ? 'Agregamos ' + partes.join(' y ') : 'Listo') + (nCamb ? '. Actualizamos los datos de tu tarjeta' : '') + '. El PDF no se guardó.');
 }
+
+// Para ajustar el lector a nuevos formatos de banco: abre la página con ?depurar y usa window.CC_DEPURAR en la consola.
+if (/[?&]depurar\b/.test(location.search)) window.CC_DEPURAR = { lineasDePDF, lineasDeOCR, limpiarOCR, lineaMovimiento, resumenEstado, analizarEstado, limpiarDesc, catDe };
 
 /* ================= render general ================= */
 function analisis(){ return new Map(state.tarjetas.map(c => [c.id, analizar(c)])); }
