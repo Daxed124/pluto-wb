@@ -1,0 +1,3 @@
+spa.traineddata.gz (4.0.0_best_int) viene del paquete npm @tesseract.js-data/spa@1.0.0,
+que redistribuye los modelos de https://github.com/tesseract-ocr/tessdata_best
+bajo la licencia Apache 2.0 (https://www.apache.org/licenses/LICENSE-2.0).

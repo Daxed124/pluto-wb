@@ -3,12 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>Aviso de privacidad · Cuentas Claras</title>
 <link rel="icon" href="assets/icono.svg" type="image/svg+xml">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/app.css?v=9">
 <style>
   .doc{max-width:72ch;padding-block:32px 64px;display:grid;gap:18px}
   .doc h1{font-family:var(--f-display);font-stretch:118%;font-weight:800;font-size:clamp(26px,4vw,34px);line-height:1.1}
@@ -36,7 +34,10 @@
     <li><strong>En tu navegador.</strong> Mientras no conectes Google Drive, tus datos se quedan en el almacenamiento local de tu navegador, en tu dispositivo.</li>
     <li><strong>En tu Google Drive, si tú lo conectas.</strong> Se guardan en la carpeta oculta de “datos de aplicación” de tu propio Drive. Esa carpeta no aparece entre tus archivos y solo esta app puede leerla.</li>
   </ul>
-  <p>La app no tiene servidor ni base de datos propia. <strong>El responsable no puede ver tus datos</strong>: nunca salen de tu navegador, salvo hacia tu propio Google Drive.</p>
+  <p>La app no tiene servidor ni base de datos propia. <strong>El responsable no puede ver tus datos</strong>: nunca salen de tu navegador, salvo hacia tu propio Google Drive. La página tiene una política de seguridad que le impide enviar información a cualquier otro sitio.</p>
+
+  <h2>Protección con contraseña (opcional)</h2>
+  <p>En la sección <strong>Tus datos</strong> puedes proteger todo con una contraseña. Tus datos se cifran con AES de 256 bits en tu navegador, en tu Google Drive y en los respaldos que descargues. La contraseña no se guarda en ningún lado, así que sin ella nadie puede leerlos: ni quien use tu dispositivo, ni Google, ni el responsable. Por la misma razón, <strong>si la olvidas no hay forma de recuperar tus datos</strong>.</p>
 
   <h2>Qué permiso le pide a Google</h2>
   <p>Solo el permiso <code>drive.appdata</code>, que da acceso a la carpeta de datos de esta app en tu Drive. Con ese permiso la app <strong>no puede ver, abrir ni modificar tus demás archivos</strong>, ni tu correo o tus contactos.</p>
@@ -44,16 +45,16 @@
 
   <h2>Cómo borrar tus datos</h2>
   <ul>
-    <li>En la app, sección <strong>Tus datos</strong>: “Borrar mis datos de Drive” elimina tu archivo de Drive y “Borrar todos mis datos” limpia el navegador.</li>
+    <li>En la app, sección <strong>Tus datos</strong>: “Borrar todos mis datos” limpia el navegador y, si Drive está conectado, también elimina tu archivo de Drive con su historial de versiones. “Borrar mis datos de Drive” elimina solo el archivo de Drive.</li>
     <li>Puedes quitarle el acceso a la app en cualquier momento desde <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">myaccount.google.com/permissions</a>.</li>
   </ul>
 
   <h2>Servicios de terceros</h2>
   <ul>
     <li><strong>GitHub Pages</strong> aloja la página y puede registrar datos técnicos como tu dirección IP. <a href="https://docs.github.com/es/site-policy/privacy-policies/github-general-privacy-statement" target="_blank" rel="noopener">Aviso de privacidad de GitHub</a>.</li>
-    <li><strong>Google Fonts</strong> entrega las tipografías de la página.</li>
     <li><strong>Google</strong> gestiona el inicio de sesión y Google Drive cuando decides conectarlo. <a href="https://policies.google.com/privacy?hl=es" target="_blank" rel="noopener">Política de privacidad de Google</a>.</li>
   </ul>
+  <p>Todo lo demás, incluidas las tipografías y los lectores de PDF y de imágenes, se entrega desde este mismo sitio, sin pasar por otros servidores.</p>
   <p>La app no usa cookies de publicidad ni herramientas de analítica.</p>
 
   <h2>No es asesoría financiera</h2>

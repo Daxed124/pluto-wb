@@ -1,17 +1,27 @@
 /* Cuentas Claras — código compartido por la versión pública (index.html)
-   y la personal (personal/index.html). La personal activa con window.CC_EDICION = 'personal':
+   y la personal (personal/index.html). La personal se activa con <html data-edicion="personal">:
    registro diario, meses sin intereses, fechas de pago y préstamos. */
 (function () {
 'use strict';
 
+// Si otra página intenta mostrar la app dentro de un marco, la app no se muestra.
+if (window.top !== window.self) {
+  document.documentElement.style.display = 'none';
+  try { window.top.location = window.location.href; } catch (e) {}
+  return;
+}
+
 /* ================= configuración ================= */
-const PERSONAL = window.CC_EDICION === 'personal';
+const PERSONAL = document.documentElement.dataset.edicion === 'personal';
 const CFG = window.CC_CONFIG || {};
 const CLIENT_ID = String(CFG.googleClientId || '').trim();
 const DRIVE_OK = /\.apps\.googleusercontent\.com$/.test(CLIENT_ID);
+// Librerías servidas desde el propio sitio (assets/vendor), nunca desde otro servidor.
+const VENDOR = new URL('vendor/', document.currentScript.src).href;
 const PREFIJO = PERSONAL ? 'cuentas-claras.personal' : 'cuentas-claras';
 const LS_KEY = PREFIJO + '.v1', LS_TAB = PREFIJO + '.tab', LS_DRIVE = PREFIJO + '.drive';
 const LS_RESPALDO = PREFIJO + '.respaldo', LS_CAT = PREFIJO + '.ultima-cat';
+const LS_PRIVADO = PREFIJO + '.privado', LS_BLOQUEO = PREFIJO + '.bloqueo';
 const ARCHIVO = PERSONAL ? 'cuentas-claras-personal.json' : 'cuentas-claras.json';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 
@@ -163,13 +173,77 @@ const local = {
   set(k, v){ try { localStorage.setItem(k, v); return true; } catch (e) { return false; } },
   del(k){ try { localStorage.removeItem(k); } catch (e) {} }
 };
+/* ================= cifrado con contraseña (opcional) =================
+   AES-GCM de 256 bits con una llave derivada de la contraseña (PBKDF2-SHA256, 600 000 vueltas).
+   La contraseña y la llave viven solo en la memoria de la página: nunca se guardan ni se envían.
+   Lo cifrado se guarda como un "sobre": { cc:'cifrado', v, kdf, it, salt, iv, ct }. */
+const ITER = 600000;
+const cifra = { pw:null, clave:null, salt:null, it:ITER, cache:new Map() };
+const esSobre = o => !!(o && o.cc === 'cifrado' && typeof o.ct === 'string' && typeof o.iv === 'string' && typeof o.salt === 'string');
+function aB64(buf){
+  const u = new Uint8Array(buf); let s = '';
+  for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+function deB64(s){ const b = atob(s), u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
+async function derivar(pw, saltB64, it){
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name:'PBKDF2', salt:deB64(saltB64), iterations:it, hash:'SHA-256' }, base, { name:'AES-GCM', length:256 }, false, ['encrypt', 'decrypt']);
+}
+async function cifrarTexto(txt){
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, cifra.clave, new TextEncoder().encode(txt));
+  return JSON.stringify({ cc:'cifrado', v:1, kdf:'PBKDF2-SHA256', it:cifra.it, salt:cifra.salt, iv:aB64(iv), ct:aB64(ct) });
+}
+// Abre un sobre con la contraseña indicada o, si no se da, con la de esta sesión.
+async function abrirSobre(sobre, pw){
+  const it = Math.round(Number(sobre.it));
+  if (!(it >= 100000 && it <= 5000000)) throw { tipo:'clave-incorrecta' };
+  const k = sobre.salt + ':' + it;
+  let key;
+  if (pw != null) key = await derivar(pw, sobre.salt, it);
+  else if (cifra.cache.has(k)) key = cifra.cache.get(k);
+  else if (cifra.pw) key = await derivar(cifra.pw, sobre.salt, it);
+  else throw { tipo:'sin-clave' };
+  let txt;
+  try { txt = new TextDecoder().decode(await crypto.subtle.decrypt({ name:'AES-GCM', iv:deB64(sobre.iv) }, key, deB64(sobre.ct))); }
+  catch (e) { throw { tipo:'clave-incorrecta' }; }
+  cifra.cache.set(k, key);
+  return JSON.parse(txt);
+}
+// Deja activa la contraseña de un sobre ya abierto (misma sal), p. ej. al desbloquear o al traerlo de Drive.
+function usarSobre(pw, sobre){
+  cifra.pw = pw; cifra.salt = sobre.salt; cifra.it = Math.round(Number(sobre.it));
+  cifra.clave = cifra.cache.get(sobre.salt + ':' + cifra.it);
+}
+async function activarCifrado(pw){
+  cifra.salt = aB64(crypto.getRandomValues(new Uint8Array(16))); cifra.it = ITER; cifra.pw = pw;
+  cifra.cache.clear();
+  cifra.clave = await derivar(pw, cifra.salt, ITER);
+  cifra.cache.set(cifra.salt + ':' + ITER, cifra.clave);
+}
+function quitarCifrado(){ cifra.pw = null; cifra.clave = null; cifra.salt = null; cifra.cache.clear(); }
+const empacar = async obj => cifra.clave ? cifrarTexto(JSON.stringify(obj)) : JSON.stringify(obj);
+async function desempacar(texto){ const o = typeof texto === 'string' ? JSON.parse(texto) : texto; return esSobre(o) ? abrirSobre(o) : o; }
+
+let sobreInicial = null;
 let state = (() => {
-  try { const raw = local.get(LS_KEY); if (raw) { const s = normalizar(JSON.parse(raw)); if (s) return s; } } catch (e) {}
+  try {
+    const raw = local.get(LS_KEY);
+    if (raw) {
+      const o = JSON.parse(raw);
+      if (esSobre(o)) { sobreInicial = o; return enBlanco(); }
+      const s = normalizar(o); if (s) return s;
+    }
+  } catch (e) {}
   return ejemplo(paisDetectado());
 })();
+let localT = null;
+async function guardarLocal(){ clearTimeout(localT); localT = null; if (bloqueando) return; local.set(LS_KEY, await empacar(state)); }
+async function guardarRespaldo(obj){ local.set(LS_RESPALDO, await empacar(obj)); }
 
 /* ================= Google Drive ================= */
-const drive = { estado: DRIVE_OK ? 'off' : 'sin-config', token:null, exp:0, client:null, fileId:null, mod:null, writing:false, pending:false, guardando:false };
+const drive = { estado: DRIVE_OK ? 'off' : 'sin-config', token:null, exp:0, client:null, fileId:null, mod:null, writing:false, pending:false, guardando:false, purgar:false };
 let pendienteToken = null, saveT = null;
 
 function cargarGIS(){
@@ -240,14 +314,31 @@ async function conectarDrive(){
     drive.estado = 'ok';
     if (f) {
       drive.fileId = f.id; drive.mod = f.modifiedTime;
-      const rem = normalizar(await leerArchivo(f.id));
+      const bruto = await leerArchivo(f.id);
+      let rem, nuevaClave = false;
+      if (esSobre(bruto)) {
+        try { rem = normalizar(await abrirSobre(bruto)); }
+        catch (e) {
+          if (e.tipo !== 'sin-clave' && e.tipo !== 'clave-incorrecta') throw e;
+          const pw = await dialogo({
+            titulo:'Tus datos en Drive tienen contraseña',
+            texto: e.tipo === 'sin-clave' ? 'Los protegiste con contraseña en otro dispositivo. Escríbela para abrirlos aquí.' : 'Tu archivo de Drive usa una contraseña distinta a la de este dispositivo. Escríbela para abrirlo.',
+            boton:'Abrir', verificar: async p => { try { await abrirSobre(bruto, p); return true; } catch (x) { return 'Esa contraseña no abre tu archivo de Drive.'; } }
+          });
+          if (pw == null) { drive.estado = antes; renderCuenta(); toast('No se sincronizó con Drive porque falta la contraseña.'); return; }
+          rem = normalizar(await abrirSobre(bruto, pw));
+          usarSobre(pw, bruto); nuevaClave = true;
+        }
+      } else rem = normalizar(bruto);
       if (rem && tiempo(rem) >= tiempo(state)) {
-        if (tiempo(state) > 0) local.set(LS_RESPALDO, JSON.stringify(state));
-        state = rem; local.set(LS_KEY, JSON.stringify(state)); sim.fuente = null;
-        renderAll();
-        toast('Listo. Cargamos tus datos guardados en Google Drive.');
+        if (tiempo(state) > 0) await guardarRespaldo(state);
+        state = rem; await guardarLocal(); sim.fuente = null;
+        renderAll(); iniciarBloqueo();
+        // Si este dispositivo tiene contraseña y el archivo de Drive no, se vuelve a subir ya cifrado.
+        if (cifra.clave && !esSobre(bruto)) { drive.purgar = true; await guardarAhora(); }
+        toast('Listo. Cargamos tus datos guardados en Google Drive.' + (nuevaClave ? ' Este dispositivo quedó protegido con la misma contraseña.' : ''));
       } else {
-        if (rem) local.set(LS_RESPALDO, JSON.stringify(rem));
+        if (rem) await guardarRespaldo(rem);
         await guardarAhora();
         toast(rem ? 'Guardamos en Drive los cambios más recientes de este dispositivo. La versión anterior quedó como respaldo.' : 'Listo. Tus datos se guardan en tu Google Drive.');
       }
@@ -267,14 +358,23 @@ async function conectarDrive(){
   renderCuenta();
 }
 async function guardarAhora(){
-  const json = JSON.stringify(state);
+  clearTimeout(localT); localT = null;
+  if (bloqueando) return;
+  const json = await empacar(state);
   local.set(LS_KEY, json);
   if (drive.estado !== 'ok') { drive.guardando = false; renderCuenta(); return; }
   if (!tokenValido()) { drive.estado = 'expirado'; drive.guardando = false; renderCuenta(); return; }
   if (drive.writing) { drive.pending = true; return; }
   drive.writing = true; drive.guardando = true; renderCuenta();
   try {
+    // Al poner, cambiar o quitar la contraseña se borra el archivo viejo: así Google elimina
+    // también su historial de versiones y no quedan copias con la protección anterior.
+    if (drive.purgar && drive.fileId) {
+      try { await api('https://www.googleapis.com/drive/v3/files/' + drive.fileId, { method:'DELETE' }); } catch (e) { if (!e || e.code !== 404) throw e; }
+      drive.fileId = null;
+    }
     const r = drive.fileId ? await actualizarArchivo(drive.fileId, json) : await crearArchivo(json);
+    drive.purgar = false;
     drive.fileId = r.id || drive.fileId; drive.mod = r.modifiedTime || drive.mod;
   } catch (e) {
     if (e && e.code === 401) drive.estado = 'expirado';
@@ -292,9 +392,10 @@ async function revisarRemoto(){
     const f = await buscarArchivo();
     if (!f || f.modifiedTime === drive.mod) return;
     drive.fileId = f.id; drive.mod = f.modifiedTime;
-    const rem = normalizar(await leerArchivo(f.id));
+    let rem;
+    try { rem = normalizar(await desempacar(await leerArchivo(f.id))); } catch (e) { return; }
     if (rem && tiempo(rem) > tiempo(state) && !saveT) {
-      state = rem; local.set(LS_KEY, JSON.stringify(state)); renderAll();
+      state = rem; await guardarLocal(); renderAll();
       toast('Actualizamos tus datos con los cambios que hiciste en otro dispositivo.');
     }
   } catch (e) { if (e && e.code === 401) { drive.estado = 'expirado'; renderCuenta(); } }
@@ -328,7 +429,7 @@ async function borrarTodo(){
       if (f) await api('https://www.googleapis.com/drive/v3/files/' + f.id, { method:'DELETE' });
       drive.fileId = null; drive.mod = null;
     } catch (e) {
-      renderAll(); local.set(LS_KEY, JSON.stringify(state));
+      renderAll(); await guardarLocal();
       toast('Borramos tus datos de este navegador, pero no pudimos borrar el archivo de Drive. Usa “Borrar mis datos de Drive”.');
       return;
     }
@@ -341,14 +442,24 @@ async function borrarTodo(){
 }
 
 function cambiado(){
+  if (bloqueando) return;
   state.actualizado = new Date().toISOString();
-  local.set(LS_KEY, JSON.stringify(state));
+  // Sin contraseña se guarda al instante; con contraseña, cifrar es asíncrono y se agrupa cada 250 ms.
+  if (!cifra.clave) local.set(LS_KEY, JSON.stringify(state));
+  else { clearTimeout(localT); localT = setTimeout(guardarLocal, 250); }
   if (drive.estado === 'ok') { drive.guardando = true; renderCuenta(); }
   clearTimeout(saveT);
   saveT = setTimeout(() => { saveT = null; guardarAhora(); }, 1200);
 }
-window.addEventListener('pagehide', () => { if (saveT) { clearTimeout(saveT); saveT = null; guardarAhora(); } });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') revisarRemoto(); });
+function guardarPendiente(){
+  if (saveT) { clearTimeout(saveT); saveT = null; guardarAhora(); }
+  else if (localT) guardarLocal();
+}
+window.addEventListener('pagehide', guardarPendiente);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') guardarPendiente();
+  else { revisarBloqueo(); revisarRemoto(); }
+});
 
 /* ================= formato ================= */
 const fmtCache = new Map();
@@ -365,9 +476,12 @@ function nf(key, opts){
   return fmtCache.get(key);
 }
 const cur = extra => Object.assign({ style:'currency', currency:state.moneda, currencyDisplay:'narrowSymbol' }, extra || {});
-const m2 = x => nf('m2' + state.moneda, cur()).format(x || 0);
-const m0 = x => nf('m0' + state.moneda, cur({ maximumFractionDigits:0, minimumFractionDigits:0 })).format(Math.round(x) || 0);
-const mc = x => nf('mc' + state.moneda, cur({ notation:'compact', maximumFractionDigits:1 })).format(x || 0);
+// Modo privado: los montos se muestran como ••••• para que nadie los lea por encima del hombro.
+let privado = local.get(LS_PRIVADO) === '1';
+const OCULTO = '•••••';
+const m2 = x => privado ? OCULTO : nf('m2' + state.moneda, cur()).format(x || 0);
+const m0 = x => privado ? OCULTO : nf('m0' + state.moneda, cur({ maximumFractionDigits:0, minimumFractionDigits:0 })).format(Math.round(x) || 0);
+const mc = x => privado ? '•••' : nf('mc' + state.moneda, cur({ notation:'compact', maximumFractionDigits:1 })).format(x || 0);
 const pct = (x, d) => nf('p' + (d || 0), { style:'percent', maximumFractionDigits:d || 0 }).format(x || 0);
 const tasaTxt = v => nf('t', { maximumFractionDigits:2 }).format(Number(v) || 0) + '%';
 function dur(n){
@@ -658,7 +772,8 @@ const TABS = [
   { id:'plan', n:'Plan de pagos' }
 ].filter(Boolean);
 const TAB_IDS = TABS.map(t => t.id);
-const ICONO_DRIVE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#1FA463" d="M8.2 3h7.6l6.2 10.8h-7.6z"/><path fill="#4285F4" d="M22 13.8 18.2 20.5H5.8l3.8-6.7z"/><path fill="#FFD04B" d="M8.2 3 2 13.8l3.8 6.7L12 9.7z"/></svg>';
+const ICONO_OJO = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
+const ICONO_DRIVE ='<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#1FA463" d="M8.2 3h7.6l6.2 10.8h-7.6z"/><path fill="#4285F4" d="M22 13.8 18.2 20.5H5.8l3.8-6.7z"/><path fill="#FFD04B" d="M8.2 3 2 13.8l3.8 6.7L12 9.7z"/></svg>';
 
 function panel(id, inner, lede){
   return `<section class="panel" id="tab-${id}" role="tabpanel" aria-labelledby="t-${id}" hidden>${lede ? `<p class="lede">${lede}</p>` : ''}${inner}</section>`;
@@ -672,7 +787,7 @@ function shellHTML(){
       <p class="label">${PERSONAL ? 'Mis finanzas · versión personal' : 'Finanzas personales · intereses de tarjetas'}</p>
       <h1 class="wordmark">Cuentas <span>Claras</span></h1>
     </div>
-    <div class="top-tools">${pais}<div class="cuenta" id="cuenta"></div></div>
+    <div class="top-tools">${pais}<button class="btn-g" type="button" id="btn-privado" aria-pressed="false">${ICONO_OJO}<span>Ocultar montos</span></button><div class="cuenta" id="cuenta"></div></div>
   </div>
   <canvas class="guilloche" id="guilloche" aria-hidden="true"></canvas>
 </header>
@@ -707,6 +822,16 @@ function shellHTML(){
       <button class="btn-quiet" id="btn-borrar-drive" type="button" hidden>Borrar mis datos de Drive</button>
       <button class="btn-quiet" id="btn-ejemplo" type="button">Cargar datos de ejemplo</button>
       <button class="btn-quiet" id="btn-borrar" type="button">Borrar todos mis datos</button>
+    </div>
+    <p id="proteccion-txt"></p>
+    <div class="foot-actions">
+      <button class="btn-quiet" id="btn-proteger" type="button">Proteger con contraseña</button>
+      <button class="btn-quiet" id="btn-bloquear" type="button" hidden>Bloquear ahora</button>
+      <button class="btn-quiet" id="btn-cambiar-pw" type="button" hidden>Cambiar contraseña</button>
+      <button class="btn-quiet" id="btn-quitar-pw" type="button" hidden>Quitar contraseña</button>
+      <label class="inline-fld" for="cfg-bloqueo" id="lbl-bloqueo" hidden>Bloquear si no la uso en
+        <select id="cfg-bloqueo"><option value="1">1 minuto</option><option value="5">5 minutos</option><option value="15">15 minutos</option><option value="30">30 minutos</option><option value="0">Nunca</option></select>
+      </label>
     </div>
   </section>
   <p class="foot-legal">Los resultados son estimaciones: suponen una tasa fija, sin compras nuevas, comisiones ni cargos por pago tardío. No son asesoría financiera; revisa tu estado de cuenta para los montos exactos.${PERSONAL ? '' : ' <a href="privacidad.html">Aviso de privacidad</a>'}</p>
@@ -803,7 +928,7 @@ function diarioHTML(){
       <input type="file" id="imp-file" accept="application/pdf,.pdf,image/*" multiple hidden>
     </div>
     <div class="imp-drop" id="imp-drop">o arrastra aquí tu PDF o las fotos de tu estado de cuenta</div>
-    <p class="fld-h">Con fotos o PDF escaneados, la app reconoce el texto de la imagen. La primera vez descarga el lector (unos 6 MB) y tarda unos segundos por página. Para mejores resultados, toma la foto de frente, con buena luz y sin sombras. Si tienes varias páginas, súbelas juntas.</p>
+    <p class="fld-h">Con fotos o PDF escaneados, la app reconoce el texto de la imagen. La primera vez carga el lector (unos 6 MB) y tarda unos segundos por página. Para mejores resultados, toma la foto de frente, con buena luz y sin sombras. Si tienes varias páginas, súbelas juntas.</p>
     <form class="imp-clave" id="imp-clave" autocomplete="off" hidden>
       <p class="fld-h" id="imp-clave-msg"></p>
       <div class="cfg-row">
@@ -1494,6 +1619,13 @@ function renderCuenta(){
     : e === 'sin-config'
       ? 'Tus datos se guardan solo en este navegador. Si lo limpias o cambias de dispositivo, los pierdes: descarga un respaldo de vez en cuando.'
       : 'Tus datos se guardan solo en este navegador. Si lo limpias o cambias de dispositivo, los pierdes. Guárdalos en tu Google Drive o descarga un respaldo.';
+  const prot = !!cifra.clave;
+  byId('btn-proteger').hidden = prot;
+  ['btn-bloquear', 'btn-cambiar-pw', 'btn-quitar-pw', 'lbl-bloqueo'].forEach(id => { byId(id).hidden = !prot; });
+  byId('cfg-bloqueo').value = String(minutosBloqueo());
+  byId('proteccion-txt').textContent = prot
+    ? 'Tus datos están cifrados con tu contraseña. Sin ella nadie puede leerlos: ni quien use este dispositivo, ni Google, ni quien hizo la app.'
+    : 'Tus datos no están cifrados: cualquiera que use este navegador podría verlos. Protégelos con una contraseña que solo tú conozcas.';
 }
 function descargar(nombre, contenido, tipo){
   const url = URL.createObjectURL(new Blob([contenido], { type:tipo }));
@@ -1532,12 +1664,22 @@ function descargarICS(){
 }
 function importar(file){
   const rd = new FileReader();
-  rd.onload = () => {
+  rd.onload = async () => {
     let raw = null;
     try { raw = JSON.parse(String(rd.result)); } catch (e) {}
+    if (esSobre(raw)) {
+      try { raw = await abrirSobre(raw); }
+      catch (e) {
+        const sobre = raw;
+        const pw = await dialogo({ titulo:'Respaldo con contraseña', texto:'Este respaldo está cifrado. Escribe la contraseña que usabas cuando lo descargaste.', boton:'Abrir respaldo',
+          verificar: async p => { try { await abrirSobre(sobre, p); return true; } catch (x) { return 'Esa contraseña no abre este respaldo.'; } } });
+        if (pw == null) return;
+        raw = await abrirSobre(sobre, pw);
+      }
+    }
     const s = raw && (Array.isArray(raw.ingresos) || Array.isArray(raw.tarjetas)) ? normalizar(raw) : null;
     if (!s) { toast('Ese archivo no es un respaldo de Cuentas Claras.'); return; }
-    local.set(LS_RESPALDO, JSON.stringify(state));
+    await guardarRespaldo(state);
     s.ejemplo = false; reemplazar(s);
     toast('Cargamos tu respaldo. Tus datos anteriores quedaron en “Recuperar versión anterior”.');
   };
@@ -1548,7 +1690,7 @@ function importar(file){
    Todo ocurre en el navegador. El PDF no se sube a ningún lado: se lee con PDF.js,
    se sacan los movimientos, se limpian los datos sensibles y el archivo se descarta.
    Solo se guardan los movimientos que la persona confirma. */
-const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/';
+const PDFJS = VENDOR + 'pdfjs/'; // PDF.js 4.10.38 (pdfjs-dist), copia verificada contra npm
 let pdfjsProm = null, claveResolver = null, imp = null;
 function cargarPdfjs(){
   if (!pdfjsProm) pdfjsProm = import(PDFJS + 'pdf.min.mjs').then(m => { m.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.mjs'; return m; })
@@ -1603,11 +1745,13 @@ async function lineasDePDF(bytes, avance){
 }
 
 /* Reconocimiento de texto (OCR) para fotos y escaneos, con Tesseract.js dentro del navegador. */
-const TESS_JS = 'https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/';
+// Tesseract.js 6.0.1, núcleo 6.0.0 y datos de español 4.0.0_best_int, copias verificadas contra npm.
+const TESS_JS = VENDOR + 'tesseract/';
 const TESS_OPTS = {
   workerPath: TESS_JS + 'worker.min.js',
-  corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@6.0.0',
-  langPath: 'https://cdn.jsdelivr.net/npm/@tesseract.js-data/spa@1.0.0/4.0.0_best_int'
+  corePath: VENDOR + 'tesseract-core',
+  langPath: VENDOR + 'tessdata',
+  workerBlobURL: false
 };
 let tessProm = null;
 function cargarTesseract(){
@@ -1623,7 +1767,7 @@ function cargarTesseract(){
 }
 async function crearOCR(avance){
   const T = await cargarTesseract();
-  avance('Preparando el lector de imágenes (la primera vez descarga unos 6 MB)…');
+  avance('Preparando el lector de imágenes (la primera vez carga unos 6 MB desde este sitio)…');
   try {
     return await T.createWorker('spa', 1, Object.assign({ logger: m => { if (m && m.status === 'recognizing text') avance(null, m.progress); } }, TESS_OPTS));
   } catch (e) { throw { tipo:'cdn' }; }
@@ -2013,6 +2157,7 @@ document.addEventListener('input', e => {
     sim.fuente = null; renderAll(); cambiado(); return;
   }
   if (el.id === 'cfg-iva') { state.iva = Number(el.value) || 0; renderOutputs(); cambiado(); return; }
+  if (el.id === 'cfg-bloqueo') { local.set(LS_BLOQUEO, el.value); ultimoUso = Date.now(); iniciarBloqueo(); return; }
   if (el.id === 'pl-presupuesto') { state.plan.presupuesto = el.value === '' ? null : (Number(el.value) || 0); renderPlan(analisis()); cambiado(); return; }
   if (el.id === 's-fuente') { if (el.value === 'propio') sim.fuente = 'propio'; else simDesdeTarjeta(el.value); simInputs(); renderSim(); return; }
   const sk = SIM_KEYS[el.id];
@@ -2117,17 +2262,25 @@ document.addEventListener('click', e => {
   switch (b.id) {
     case 'btn-blanco': reemplazar(enBlanco(state)); break;
     case 'btn-ocultar': state.ejemplo = false; byId('demo-banner').hidden = true; cambiado(); break;
-    case 'btn-ejemplo': dosPasos(b, 'Reemplaza tus datos. ¿Seguro?', () => { local.set(LS_RESPALDO, JSON.stringify(state)); reemplazar(ejemplo(state.pais)); }); break;
+    case 'btn-ejemplo': dosPasos(b, 'Reemplaza tus datos. ¿Seguro?', async () => { await guardarRespaldo(state); reemplazar(ejemplo(state.pais)); }); break;
     case 'btn-borrar': dosPasos(b, 'Toca otra vez para borrar todo', borrarTodo); break;
-    case 'btn-respaldo': descargar('cuentas-claras' + (PERSONAL ? '-personal' : '') + '-' + isoDia(hoy()) + '.json', JSON.stringify(state, null, 2), 'application/json'); break;
+    case 'btn-respaldo': (async () => {
+      descargar('cuentas-claras' + (PERSONAL ? '-personal' : '') + (cifra.clave ? '-cifrado' : '') + '-' + isoDia(hoy()) + '.json',
+        cifra.clave ? await empacar(state) : JSON.stringify(state, null, 2), 'application/json');
+      toast(cifra.clave ? 'Descargamos tu respaldo cifrado. Para abrirlo necesitarás tu contraseña.' : 'Descargamos tu respaldo. Guárdalo en un lugar seguro: no está cifrado.');
+    })(); break;
     case 'btn-importar': byId('f-importar').click(); break;
-    case 'btn-recuperar': {
-      let r = null; try { r = normalizar(JSON.parse(local.get(LS_RESPALDO))); } catch (err) {}
-      if (!r) { toast('No hay una versión anterior guardada.'); break; }
-      local.set(LS_RESPALDO, JSON.stringify(state)); reemplazar(r);
+    case 'btn-recuperar': (async () => {
+      let r = null; try { r = normalizar(await desempacar(local.get(LS_RESPALDO))); } catch (err) {}
+      if (!r) { toast('No hay una versión anterior que podamos abrir.'); return; }
+      await guardarRespaldo(state); reemplazar(r);
       toast('Recuperamos la versión anterior. Si fue un error, toca el mismo botón para regresar.');
-      break;
-    }
+    })(); break;
+    case 'btn-proteger': proteger(); break;
+    case 'btn-cambiar-pw': cambiarContrasena(); break;
+    case 'btn-quitar-pw': quitarContrasena(); break;
+    case 'btn-bloquear': bloquear(); break;
+    case 'btn-privado': alternarPrivado(); break;
     case 'btn-desconectar': desconectarDrive(); break;
     case 'btn-borrar-drive': dosPasos(b, 'Toca otra vez para borrar tu archivo de Drive', borrarDeDrive); break;
     case 'btn-ics': descargarICS(); break;
@@ -2182,30 +2335,188 @@ function dibujarGuilloche(){
   }
 }
 
-/* ================= arranque ================= */
-byId('app').innerHTML = shellHTML();
-if (PERSONAL) {
-  const uc = local.get(LS_CAT); if (uc && CATS.includes(uc)) byId('d-cat').value = uc;
-  const zona = byId('imp-block'), marca = byId('imp-drop');
-  ['dragenter', 'dragover'].forEach(ev => zona.addEventListener(ev, e => { e.preventDefault(); marca.classList.add('over'); }));
-  ['dragleave', 'drop'].forEach(ev => zona.addEventListener(ev, e => { e.preventDefault(); marca.classList.remove('over'); }));
-  zona.addEventListener('drop', e => { const fs = e.dataTransfer && e.dataTransfer.files; if (fs && fs.length) procesarArchivos(fs); });
+/* ================= protección: contraseña, bloqueo y modo privado ================= */
+// Ventana para pedir una contraseña. Resuelve con el texto escrito o null si se cancela.
+function dialogo(o){
+  return new Promise(res => {
+    const antes = document.activeElement;
+    const fondo = document.createElement('div');
+    fondo.className = 'modal-fondo';
+    fondo.innerHTML = `<div class="block modal" role="dialog" aria-modal="true" aria-labelledby="modal-t">
+      <h2 id="modal-t">${esc(o.titulo)}</h2>
+      ${o.texto ? `<p class="note-line">${esc(o.texto)}</p>` : ''}
+      <form id="modal-form" autocomplete="off" novalidate>
+        <label class="fld" for="modal-pw"><span class="fld-l">${o.confirmar ? 'Nueva contraseña' : 'Contraseña'}</span><input class="in" id="modal-pw" type="password" autocomplete="${o.confirmar ? 'new-password' : 'current-password'}"></label>
+        ${o.confirmar ? '<label class="fld" for="modal-pw2"><span class="fld-l">Escríbela otra vez</span><input class="in" id="modal-pw2" type="password" autocomplete="new-password"></label><p class="fld-h">Usa al menos 10 caracteres. Una frase que solo tú recuerdes es mejor que una palabra corta.</p>' : ''}
+        ${o.aviso ? '<label class="check" for="modal-acepto"><input type="checkbox" id="modal-acepto"><span>Entiendo que si olvido la contraseña <b>nadie podrá recuperar mis datos</b>.</span></label>' : ''}
+        <p class="note-line" id="modal-msg" role="status"></p>
+        <div class="imp-acc"><button class="btn" type="submit" id="modal-ok">${esc(o.boton || 'Aceptar')}</button><button class="btn-quiet" type="button" id="modal-no">Cancelar</button></div>
+      </form></div>`;
+    document.body.appendChild(fondo);
+    const pw = fondo.querySelector('#modal-pw'), msg = fondo.querySelector('#modal-msg'), ok = fondo.querySelector('#modal-ok');
+    const tecla = e => { if (e.key === 'Escape') cerrar(null); };
+    const cerrar = v => { fondo.remove(); document.removeEventListener('keydown', tecla); if (antes && antes.focus) antes.focus(); res(v); };
+    document.addEventListener('keydown', tecla);
+    fondo.querySelector('#modal-no').addEventListener('click', () => cerrar(null));
+    fondo.querySelector('#modal-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const v = pw.value;
+      if (!v) { msg.textContent = 'Escribe la contraseña.'; pw.focus(); return; }
+      if (o.confirmar) {
+        if (v.length < 10) { msg.textContent = 'Usa al menos 10 caracteres.'; pw.focus(); return; }
+        const p2 = fondo.querySelector('#modal-pw2');
+        if (v !== p2.value) { msg.textContent = 'Las dos contraseñas no coinciden.'; p2.focus(); return; }
+      }
+      if (o.aviso && !fondo.querySelector('#modal-acepto').checked) { msg.textContent = 'Marca la casilla para confirmar que lo entiendes.'; return; }
+      if (o.verificar) {
+        ok.disabled = true; msg.textContent = 'Revisando…';
+        const r = await o.verificar(v);
+        ok.disabled = false;
+        if (r !== true) { msg.textContent = r || 'No funcionó. Intenta de nuevo.'; pw.select(); return; }
+      }
+      cerrar(v);
+    });
+    pw.focus();
+  });
 }
-document.querySelector('.tabs').addEventListener('keydown', e => {
-  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
-  const btns = $$('[role="tab"]'), i = btns.indexOf(document.activeElement);
-  if (i < 0) return;
-  const n = btns[(i + (e.key === 'ArrowRight' ? 1 : -1) + btns.length) % btns.length];
-  n.focus(); mostrarTab(n.dataset.tab); e.preventDefault();
-});
-window.addEventListener('hashchange', () => { const t = location.hash.slice(1); if (TAB_IDS.includes(t)) mostrarTab(t); });
-let gT;
-window.addEventListener('resize', () => { clearTimeout(gT); gT = setTimeout(dibujarGuilloche, 120); });
-try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', dibujarGuilloche); } catch (e) {}
-renderAll();
-const h0 = (location.hash || '').slice(1);
-mostrarTab(TAB_IDS.includes(h0) ? h0 : (local.get(LS_TAB) || 'resumen'));
-dibujarGuilloche();
-if (document.fonts && document.fonts.ready) document.fonts.ready.then(dibujarGuilloche);
-if (DRIVE_OK) cargarGIS();
+// Vuelve a guardar todo con la protección actual. Borra la versión anterior del navegador y,
+// en Drive, el archivo viejo con su historial, para que no queden copias con la protección anterior.
+async function reescribirTodo(){
+  local.del(LS_RESPALDO);
+  drive.purgar = true;
+  clearTimeout(saveT); saveT = null;
+  await guardarAhora();
+}
+const avisoDrive = () => drive.estado === 'expirado' || drive.estado === 'error'
+  ? ' Reconecta Google Drive para actualizar también tu archivo de Drive.' : '';
+async function proteger(){
+  const pw = await dialogo({ titulo:'Proteger con contraseña',
+    texto:'Tus datos se cifrarán en este navegador, en tu Google Drive y en los respaldos que descargues. La contraseña no se guarda en ningún lado: te la pediremos cada vez que abras la app.',
+    confirmar:true, aviso:true, boton:'Proteger mis datos' });
+  if (pw == null) return;
+  await activarCifrado(pw);
+  await reescribirTodo();
+  renderCuenta(); iniciarBloqueo();
+  toast('Listo. Tus datos quedaron cifrados con tu contraseña.' + avisoDrive());
+}
+async function cambiarContrasena(){
+  const actual = await dialogo({ titulo:'Cambiar contraseña', texto:'Primero escribe tu contraseña actual.', boton:'Continuar',
+    verificar: async p => p === cifra.pw ? true : 'Esa no es tu contraseña actual.' });
+  if (actual == null) return;
+  const nueva = await dialogo({ titulo:'Nueva contraseña', texto:'Tus datos se volverán a cifrar con la nueva contraseña.', confirmar:true, aviso:true, boton:'Cambiar contraseña' });
+  if (nueva == null) return;
+  await activarCifrado(nueva);
+  await reescribirTodo();
+  renderCuenta();
+  toast('Cambiamos tu contraseña y volvimos a cifrar tus datos.' + avisoDrive());
+}
+async function quitarContrasena(){
+  const pw = await dialogo({ titulo:'Quitar la contraseña',
+    texto:'Tus datos volverán a guardarse sin cifrar en este navegador y en tu Google Drive. Escribe tu contraseña para confirmar.',
+    boton:'Quitar contraseña', verificar: async p => p === cifra.pw ? true : 'Esa no es tu contraseña.' });
+  if (pw == null) return;
+  quitarCifrado(); detenerBloqueo();
+  await reescribirTodo();
+  renderCuenta();
+  toast('Quitamos la contraseña. Tus datos ya no están cifrados.' + avisoDrive());
+}
+
+// Bloqueo: guarda lo pendiente (cifrado) y recarga la página, con lo que la memoria queda limpia.
+let ultimoUso = Date.now(), relojBloqueo = null, bloqueando = false;
+const minutosBloqueo = () => { const v = local.get(LS_BLOQUEO); return v == null ? 5 : (Number(v) || 0); };
+['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(ev => document.addEventListener(ev, () => { ultimoUso = Date.now(); }, { passive:true, capture:true }));
+function iniciarBloqueo(){ detenerBloqueo(); if (cifra.clave && minutosBloqueo()) relojBloqueo = setInterval(revisarBloqueo, 15000); }
+function detenerBloqueo(){ clearInterval(relojBloqueo); relojBloqueo = null; }
+function revisarBloqueo(){ const m = minutosBloqueo(); if (cifra.clave && m && Date.now() - ultimoUso > m * 60000) bloquear(); }
+async function bloquear(){
+  if (!cifra.clave || bloqueando) return;
+  detenerBloqueo(); clearTimeout(saveT); saveT = null;
+  try { await Promise.race([guardarAhora(), new Promise(r => setTimeout(r, 4000))]); } catch (e) {}
+  bloqueando = true;
+  location.reload();
+}
+
+function alternarPrivado(){
+  privado = !privado;
+  local.set(LS_PRIVADO, privado ? '1' : '0');
+  aplicarPrivado(); renderOutputs();
+}
+function aplicarPrivado(){
+  document.documentElement.classList.toggle('privado', privado);
+  const b = byId('btn-privado');
+  if (b) { b.setAttribute('aria-pressed', String(privado)); b.querySelector('span').textContent = privado ? 'Mostrar montos' : 'Ocultar montos'; }
+}
+
+// Pantalla de candado: aparece cuando los datos guardados están cifrados.
+function mostrarCandado(){
+  byId('app').innerHTML = `<main class="wrap candado">
+    <section class="block candado-box" aria-labelledby="cand-t">
+      <p class="label">${PERSONAL ? 'Mis finanzas · versión personal' : 'Finanzas personales'}</p>
+      <h1 class="wordmark" id="cand-t">Cuentas <span>Claras</span></h1>
+      <p class="note-line">Tus datos están protegidos con contraseña. Escríbela para abrirlos.</p>
+      <form class="candado-form" id="cand-form" autocomplete="off">
+        <label class="fld" for="cand-pw"><span class="fld-l">Contraseña</span><input class="in" id="cand-pw" type="password" autocomplete="current-password"></label>
+        <button class="btn" type="submit" id="cand-ok">Abrir</button>
+      </form>
+      <p class="note-line" id="cand-msg" role="status"></p>
+      <details class="candado-olvido">
+        <summary>Olvidé mi contraseña</summary>
+        <p class="note-line">No hay forma de recuperarla: ni la app ni quien la hizo la conocen. Puedes borrar los datos de este navegador y empezar de cero. Si también los guardaste en Google Drive, ahí seguirán cifrados; podrás borrarlos desde la app al conectarla.</p>
+        <button class="btn-quiet" type="button" id="cand-borrar">Borrar los datos de este navegador</button>
+      </details>
+    </section>
+  </main>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>`;
+  const form = byId('cand-form'), pw = byId('cand-pw'), msg = byId('cand-msg'), ok = byId('cand-ok');
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (!pw.value) { msg.textContent = 'Escribe tu contraseña.'; pw.focus(); return; }
+    ok.disabled = true; msg.textContent = 'Abriendo…';
+    try {
+      const obj = await abrirSobre(sobreInicial, pw.value);
+      usarSobre(pw.value, sobreInicial);
+      state = normalizar(obj) || enBlanco();
+      sobreInicial = null; pw.value = '';
+      iniciarApp(); iniciarBloqueo();
+    } catch (err) {
+      ok.disabled = false; msg.textContent = 'Esa contraseña no es correcta.'; pw.select();
+    }
+  });
+  byId('cand-borrar').addEventListener('click', e => dosPasos(e.currentTarget, 'Toca otra vez para borrar todo', () => {
+    [LS_KEY, LS_RESPALDO, LS_CAT, LS_TAB].forEach(k => local.del(k));
+    location.reload();
+  }));
+  pw.focus();
+}
+
+/* ================= arranque ================= */
+function iniciarApp(){
+  byId('app').innerHTML = shellHTML();
+  if (PERSONAL) {
+    const uc = local.get(LS_CAT); if (uc && CATS.includes(uc)) byId('d-cat').value = uc;
+    const zona = byId('imp-block'), marca = byId('imp-drop');
+    ['dragenter', 'dragover'].forEach(ev => zona.addEventListener(ev, e => { e.preventDefault(); marca.classList.add('over'); }));
+    ['dragleave', 'drop'].forEach(ev => zona.addEventListener(ev, e => { e.preventDefault(); marca.classList.remove('over'); }));
+    zona.addEventListener('drop', e => { const fs = e.dataTransfer && e.dataTransfer.files; if (fs && fs.length) procesarArchivos(fs); });
+  }
+  document.querySelector('.tabs').addEventListener('keydown', e => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    const btns = $$('[role="tab"]'), i = btns.indexOf(document.activeElement);
+    if (i < 0) return;
+    const n = btns[(i + (e.key === 'ArrowRight' ? 1 : -1) + btns.length) % btns.length];
+    n.focus(); mostrarTab(n.dataset.tab); e.preventDefault();
+  });
+  window.addEventListener('hashchange', () => { const t = location.hash.slice(1); if (TAB_IDS.includes(t)) mostrarTab(t); });
+  let gT;
+  window.addEventListener('resize', () => { clearTimeout(gT); gT = setTimeout(dibujarGuilloche, 120); });
+  try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', dibujarGuilloche); } catch (e) {}
+  aplicarPrivado();
+  renderAll();
+  const h0 = (location.hash || '').slice(1);
+  mostrarTab(TAB_IDS.includes(h0) ? h0 : (local.get(LS_TAB) || 'resumen'));
+  dibujarGuilloche();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(dibujarGuilloche);
+  if (DRIVE_OK) cargarGIS();
+}
+if (sobreInicial) mostrarCandado(); else iniciarApp();
 })();
