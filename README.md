@@ -15,6 +15,17 @@ Calculadora de finanzas personales y de intereses de tarjetas de crédito. Es un
 
 La dirección de la versión personal es pública, como todo GitHub Pages, pero tus números no están en el código. Viven en tu navegador y en tu Drive. Esa página tiene `noindex` para que no salga en buscadores.
 
+## Subir estados de cuenta (versión personal)
+
+En **Registro diario → Subir estado de cuenta** eliges la tarjeta o cuenta y subes el PDF que te da tu banco. También puedes arrastrarlo, o usar el botón "Actualizar con mi estado de cuenta" de cada tarjeta.
+
+- El PDF se lee **en tu navegador** con [PDF.js](https://mozilla.github.io/pdf.js/), que se carga desde cdnjs. El archivo no se sube a ningún servidor ni se guarda. Al terminar se borra de la memoria de la página. El archivo original en tu dispositivo no se toca.
+- Si el PDF tiene contraseña, la app la pide en pantalla y no la guarda.
+- De cada movimiento solo se conservan **fecha, comercio, monto y categoría**. Antes de mostrarlos se quitan números de tarjeta y de cuenta, referencias, folios, RFC, CURP y correos. Las transferencias quedan solo como "Transferencia", sin el nombre de la persona.
+- Todo pasa por una pantalla de revisión: los pagos y abonos, y los movimientos que ya estaban anotados, vienen sin marcar. Puedes cambiar la categoría o el nombre del comercio. Nada se guarda hasta que tocas "Agregar".
+- Si el estado de cuenta es de una tarjeta, la app también propone actualizar el saldo, la tasa, el límite y los días de corte y pago, y agregar las compras a meses sin intereses que detecte.
+- Funciona con PDF que tienen texto, que es como los descargas de la banca en línea. Si el PDF es una foto o un escaneo, la app avisa que no puede leerlo. Cada banco usa un formato distinto: si alguno no se lee bien, los movimientos se pueden anotar a mano.
+
 ## Archivos
 
 ```

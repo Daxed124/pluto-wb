@@ -283,6 +283,27 @@ main.wrap{padding-block:24px 40px;display:grid;gap:20px}
 .mov-m{font-variant-numeric:tabular-nums;font-weight:650}
 .mov .icon-btn{width:32px;height:32px;font-size:18px}
 
+/* Estados de cuenta */
+.imp-row{display:flex;flex-wrap:wrap;align-items:end;gap:12px}
+.imp-row .fld{flex:1 1 240px;max-width:380px}
+.imp-drop{border:1.5px dashed var(--line-2);border-radius:10px;padding:14px;text-align:center;color:var(--muted);font-size:14px}
+.imp-drop.over{border-color:var(--accent);background:var(--accent-wash);color:var(--accent)}
+.imp-clave{display:grid;gap:8px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2)}
+#imp-revision{display:grid;gap:12px}
+.imp-sec{border:1px solid var(--line);border-radius:10px;padding:10px 14px 12px;margin:0;display:grid;gap:8px}
+.imp-sec legend{padding:0 6px}
+.imp-sec .check{align-items:flex-start}
+.imp-sec .check input{margin-top:2px}
+.imp-tbl td{padding:6px 8px}
+.imp-tbl td:nth-child(3){min-width:190px}
+.imp-tbl td:nth-child(4){min-width:160px}
+.imp-tbl tr.off td{opacity:.55}
+.imp-tbl input[type="checkbox"]{width:17px;height:17px;accent-color:var(--accent);margin:0}
+.in-sm{padding:6px 8px;font-size:14px}
+.tag{display:inline-block;margin-top:4px;margin-right:4px;font-family:var(--f-mono);font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line-2);border-radius:4px;padding:1px 5px}
+.nowrap{white-space:nowrap}
+.imp-acc{display:flex;flex-wrap:wrap;gap:8px}
+
 /* Préstamos */
 details.amort{border-top:1px solid var(--line);padding:12px 20px}
 details.amort summary{cursor:pointer;font-weight:600;color:var(--accent);width:max-content;max-width:100%}
@@ -368,7 +389,9 @@ details.amort[open] summary{margin-bottom:10px}
   .orden .stamp,.orden .chip{grid-column:2;justify-self:start}
   .pago{grid-template-columns:48px minmax(0,1fr);row-gap:8px}
   .pago-s{grid-column:2;justify-content:flex-start}
-  .month-nav .push{margin-left:0}
+  .month-nav{display:grid;grid-template-columns:44px minmax(0,1fr) 44px}
+  .month-nav h2{font-size:18px;min-width:0}
+  .month-nav .push{margin-left:0;grid-column:1/-1;justify-self:start}
 }
 @media (max-width:380px){
   .fields,.cmp,.kv{grid-template-columns:minmax(0,1fr)}

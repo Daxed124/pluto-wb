@@ -150,7 +150,7 @@ function normalizar(s){
       id:id(p.id), nombre:str(p.nombre), tipo:TIPOS[p.tipo] ? p.tipo : 'personal', saldo:n(p.saldo), tasa:n(p.tasa), pago:n(p.pago), extra:n(p.extra),
       diaPago:dia(p.diaPago), conIva:p.conIva !== false, pagadoHasta:esISO(p.pagadoHasta) ? p.pagadoHasta : ''
     })),
-    movimientos: arr(s.movimientos).map(m => ({ id:id(m.id), fecha:esISO(m.fecha) ? m.fecha : isoDia(hoy()), monto:n(m.monto), cat:CATS.includes(m.cat) ? m.cat : 'Otros', nota:str(m.nota), metodo:typeof m.metodo === 'string' ? m.metodo.slice(0, 40) : 'efectivo' })),
+    movimientos: arr(s.movimientos).map(m => ({ id:id(m.id), fecha:esISO(m.fecha) ? m.fecha : isoDia(hoy()), monto:n(m.monto), cat:CATS.includes(m.cat) ? m.cat : 'Otros', nota:str(m.nota), metodo:typeof m.metodo === 'string' ? m.metodo.slice(0, 40) : 'efectivo', origen:m.origen === 'estado' ? 'estado' : undefined })),
     plan:{ presupuesto:s.plan && s.plan.presupuesto != null ? n(s.plan.presupuesto) : null, metodo:s.plan && s.plan.metodo === 'bola' ? 'bola' : 'avalancha' }
   };
 }
@@ -769,6 +769,27 @@ function diarioHTML(){
     </div>
     <p class="fld-h" id="d-msg" role="status"></p>
   </form>
+  <article class="block" id="imp-block">
+    <header class="block-head"><h2>Subir estado de cuenta</h2><p class="label">PDF</p></header>
+    <p class="note-line">El archivo se lee aquí mismo, en tu navegador: no se sube a ningún servidor ni se guarda, y la app lo descarta en cuanto termina de leerlo. De cada gasto solo guardamos la fecha, el comercio, el monto y la categoría, y solo los que tú confirmes. Los números de tarjeta, referencias, RFC y nombres en transferencias se quitan antes.</p>
+    <div class="imp-row">
+      <label class="fld" for="imp-cuenta"><span class="fld-l">¿De qué tarjeta o cuenta es?</span><select class="in" id="imp-cuenta"></select></label>
+      <button class="btn" type="button" id="imp-elegir">Elegir PDF</button>
+      <input type="file" id="imp-file" accept="application/pdf,.pdf" hidden>
+    </div>
+    <div class="imp-drop" id="imp-drop">o arrastra aquí tu estado de cuenta</div>
+    <form class="imp-clave" id="imp-clave" autocomplete="off" hidden>
+      <p class="fld-h" id="imp-clave-msg"></p>
+      <div class="cfg-row">
+        <label class="sr" for="imp-clave-in">Contraseña del PDF</label>
+        <input class="in" id="imp-clave-in" type="password" autocomplete="off" style="max-width:260px" placeholder="Contraseña del PDF">
+        <button class="btn" type="submit">Abrir</button>
+        <button class="btn-quiet" type="button" id="imp-clave-no">Cancelar</button>
+      </div>
+    </form>
+    <p class="note-line" id="imp-estado" role="status"></p>
+    <div id="imp-revision" hidden></div>
+  </article>
   <div class="month-nav">
     <button class="btn-quiet" type="button" data-mes="-1" aria-label="Mes anterior">‹</button>
     <h2 id="d-mes"></h2>
@@ -1009,7 +1030,8 @@ function avisoHTML(c, a){
       <p class="fld-h">${txt}</p></div>`;
   }
   return kv + `<div class="cmp">${colMin}${colTu}</div>` + nota + compras + meter +
-    `<button class="link" type="button" data-sim="${esc(c.id)}">Ver mes a mes en el simulador</button>`;
+    `<button class="link" type="button" data-sim="${esc(c.id)}">Ver mes a mes en el simulador</button>` +
+    (PERSONAL ? `<button class="link" type="button" data-imp="${esc(c.id)}">Actualizar con mi estado de cuenta (PDF)</button>` : '');
 }
 function avisoPrestamo(p, a){
   if (a.b <= 0) return '<p class="empty">Escribe el saldo pendiente del crédito.</p>';
@@ -1233,6 +1255,9 @@ function renderDiario(){
   const prev = sel.value || 'debito';
   sel.innerHTML = opts([['efectivo', 'Efectivo'], ['debito', 'Débito o transferencia']].concat(state.tarjetas.map(c => [c.id, c.nombre || 'Tarjeta sin nombre'])), prev);
   if (!sel.value) sel.value = 'debito';
+  const ic = byId('imp-cuenta'), icPrev = ic.value;
+  ic.innerHTML = opts(state.tarjetas.map(c => [c.id, c.nombre || 'Tarjeta sin nombre']).concat([['debito', 'Cuenta de débito o nómina']]), icPrev);
+  if (!ic.value) ic.selectedIndex = 0;
   const fd = byId('d-fecha'); if (!fd.value) fd.value = isoDia(hoy());
   byId('d-mes').textContent = ymTxt(diarioMes);
 
@@ -1492,6 +1517,270 @@ function importar(file){
   rd.readAsText(file);
 }
 
+/* ================= estados de cuenta en PDF =================
+   Todo ocurre en el navegador. El PDF no se sube a ningún lado: se lee con PDF.js,
+   se sacan los movimientos, se limpian los datos sensibles y el archivo se descarta.
+   Solo se guardan los movimientos que la persona confirma. */
+const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/';
+let pdfjsProm = null, claveResolver = null, imp = null;
+function cargarPdfjs(){
+  if (!pdfjsProm) pdfjsProm = import(PDFJS + 'pdf.min.mjs').then(m => { m.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.mjs'; return m; })
+    .catch(() => { pdfjsProm = null; throw { tipo:'cdn' }; });
+  return pdfjsProm;
+}
+async function lineasDePDF(bytes){
+  const pdfjs = await cargarPdfjs();
+  const task = pdfjs.getDocument({ data:bytes, isEvalSupported:false, disableFontFace:true, enableXfa:false, stopAtErrors:false });
+  task.onPassword = (update, reason) => {
+    pedirClave(reason === pdfjs.PasswordResponses.INCORRECT_PASSWORD).then(pw => { if (pw == null) task.destroy(); else update(pw); });
+  };
+  let pdf = null;
+  try {
+    pdf = await task.promise;
+    const lineas = [];
+    for (let p = 1; p <= Math.min(pdf.numPages, 40); p++) {
+      const page = await pdf.getPage(p);
+      const tc = await page.getTextContent();
+      const items = tc.items.filter(it => it.str && it.str.trim()).map(it => ({ x:it.transform[4], y:it.transform[5], s:it.str }));
+      items.sort((a, b) => b.y - a.y || a.x - b.x);
+      let cur = null;
+      for (const it of items) {
+        if (!cur || Math.abs(cur.y - it.y) > 3) { cur = { y:it.y, partes:[] }; lineas.push(cur); }
+        cur.partes.push(it);
+      }
+      page.cleanup();
+    }
+    return lineas.map(l => l.partes.sort((a, b) => a.x - b.x).map(p => p.s).join(' ').replace(/\s+/g, ' ').trim()).filter(Boolean);
+  } finally {
+    try { if (pdf) await pdf.destroy(); } catch (e) {}
+    try { await task.destroy(); } catch (e) {}
+  }
+}
+function pedirClave(incorrecta){
+  return new Promise(res => {
+    const f = byId('imp-clave'), inp = byId('imp-clave-in');
+    byId('imp-clave-msg').textContent = incorrecta
+      ? 'Esa contraseña no abrió el archivo. Intenta de nuevo.'
+      : 'Este estado de cuenta tiene contraseña. Escribe la que te dio tu banco; no la guardamos.';
+    f.hidden = false; inp.value = ''; inp.focus();
+    claveResolver = v => { claveResolver = null; inp.value = ''; f.hidden = true; res(v); };
+  });
+}
+
+const MESES = { ene:1, enero:1, jan:1, feb:2, febrero:2, mar:3, marzo:3, abr:4, abril:4, apr:4, may:5, mayo:5, jun:6, junio:6, jul:7, julio:7, ago:8, agosto:8, aug:8, sep:9, sept:9, set:9, septiembre:9, setiembre:9, oct:10, octubre:10, nov:11, noviembre:11, dic:12, diciembre:12, dec:12 };
+const sinAcentos = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
+const RE_FECHA_INI = /^(\d{1,2})[\s\-\/.]+(\d{1,2}|[A-Za-zÁÉÍÓÚáéíóú]{3,10})\.?(?:[\s\-\/.]+(\d{4}|\d{2})(?![\d,.]))?/;
+const RE_FECHA_EN = /(\d{1,2})[\s\-\/.]+(\d{1,2}|[A-Za-zÁÉÍÓÚáéíóú]{3,10})\.?[\s\-\/.]+(?:de\s+)?(\d{4}|\d{2})(?![\d,.])/i;
+const reMontos = () => /([-+])?\s?\$?\s?(\d{1,3}(?:,\d{3})+|\d+)\.(\d{2})(?!\d)(\s?(?:-(?!\d)|CR\b))?/gi;
+const montoDe = a => parseFloat(a[2].replace(/,/g, '') + '.' + a[3]);
+const RE_ABONO = /\b(SU PAGO|PAGO RECIBIDO|GRACIAS POR SU PAGO|PAGO TDC|PAGO A TARJETA|PAGO TARJETA|PAGO INTERBANCARIO|ABONO|DEVOLUCION|BONIFICACION|REEMBOLSO|CASHBACK|DEPOSITO|RECIBIDO|RECIBIDA|NOMINA|REVERSO|CANCELACION)\b/;
+const REGLAS_CAT = [
+  ['Deudas y préstamos', /INTERES|COMISION|\bIVA\b|ANUALIDAD|CARGO POR|PENALIZA/],
+  ['Transporte', /UBER(?!\s*EATS)|DIDI(?!\s*FOOD)|CABIFY|PEMEX|GASOLIN|SHELL|MOBIL|\bBP\b|G500|OXXO GAS|HIDROSINA|CASETA|IAVE|TELEPEAJE|PASE URBANO|ESTACIONAM|\bMETRO\b|\bADO\b|VOLARIS|VIVA ?AEROBUS|AEROMEXICO|AUTOBUS/],
+  ['Comida', /WALMART|WAL-MART|SORIANA|CHEDRAUI|LA COMER|\bHEB\b|H-E-B|COSTCO|\bSAMS\b|SAM'S|SUPERAMA|AURRERA|CITY MARKET|FRESKO|OXXO|7-ELEVEN|7 ELEVEN|CIRCLE K|RESTAUR|TACO|STARBUCKS|UBER ?EATS|RAPPI|DIDI ?FOOD|DOMINO|MCDONALD|BURGER|\bKFC\b|LITTLE CAESAR|\bVIPS\b|\bTOKS\b|CAFE|PANADER|CARNICER|POLLO|PIZZA|SUSHI|\bSUPER\b|MERCADO\b/],
+  ['Servicios', /TELMEX|TELCEL|AT&T|MOVISTAR|\bIZZI\b|TOTALPLAY|MEGACABLE|\bCFE\b|\bSKY\b|\bAGUA\b|NATURGY|GAS NATURAL|\bBAIT\b|INTERNET/],
+  ['Entretenimiento', /NETFLIX|SPOTIFY|DISNEY|\bHBO\b|\bMAX\b|PRIME ?VIDEO|AMAZON PRIME|APPLE\.COM|GOOGLE|YOUTUBE|CINEPOLIS|CINEMEX|TICKETMASTER|STEAM|PLAYSTATION|XBOX|NINTENDO|\bBAR\b|CANTINA/],
+  ['Salud', /FARMAC|BENAVIDES|SIMILARES|SAN PABLO|HOSPITAL|MEDIC|DOCTOR|LABORATORIO|CHOPO|DENTAL|OPTICA/],
+  ['Ropa y cuidado personal', /LIVERPOOL|PALACIO DE HIERRO|SUBURBIA|\bZARA\b|H&M|C&A|SHEIN|\bNIKE\b|ADIDAS|PULL ?(AND|&) ?BEAR|BERSHKA|SEPHORA|ESTETIC|BARBER|PRICE SHOES|INNOVASPORT/],
+  ['Educación', /COLEGIAT|UNIVERSIDAD|ESCUELA|UDEMY|COURSERA|PLATZI|LIBRERI|GANDHI/],
+  ['Vivienda', /HOME DEPOT|\bIKEA\b|MUEBLE|RENTA\b|MANTENIMIENTO|FERRETER/]
+];
+const catDe = up => { for (const [c, re] of REGLAS_CAT) if (re.test(up)) return c; return 'Otros'; };
+function fechaDe(d, mo, y, ref){
+  const day = +d, month = /^\d+$/.test(mo) ? +mo : MESES[sinAcentos(mo).toLowerCase()];
+  if (!month || month > 12 || day < 1 || day > 31) return null;
+  let year;
+  if (y) year = y.length === 2 ? 2000 + +y : +y;
+  else { year = ref.getFullYear(); if (month > ref.getMonth() + 1) year--; }
+  if (year < 2000 || year > 2100) return null;
+  const f = new Date(year, month - 1, day);
+  return f.getMonth() === month - 1 ? f : null;
+}
+// Quita lo que no debe guardarse: correos, RFC, CURP, números de tarjeta, referencias y nombres en transferencias.
+function limpiarDesc(s){
+  if (/SPEI|TRANSFER|TRASPASO/i.test(s)) return /RECIB|DEPOSIT/i.test(s) ? 'Transferencia recibida' : 'Transferencia';
+  return (' ' + s + ' ')
+    .replace(/\S+@\S+/g, ' ')
+    .replace(/\b[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}\b/gi, ' ')
+    .replace(/\b[A-Z]{4}\d{6}[A-Z]{6}[A-Z0-9]{2}\b/gi, ' ')
+    .replace(/\b(REF(ERENCIA)?|AUT(ORIZACI[OÓ]N)?|FOLIO|RASTREO|CUENTA|CTA|TARJETA|TDC|RFC|CLABE|CURP)\b[\s:.#-]*[\w*-]*/gi, ' ')
+    .replace(/(?:[*•]{2,}|\b[xX]{3,})[\s-]*\d*/g, ' ')
+    .replace(/\d(?:[\s-]?\d){3,}/g, ' ')
+    .replace(/[^\p{L}\p{N}&.,'\/\- ]/gu, ' ')
+    .replace(/\s+/g, ' ').trim().slice(0, 60);
+}
+function resumenEstado(texto){
+  const ventana = re => { const m = re.exec(texto); return m ? texto.slice(m.index + m[0].length, m.index + m[0].length + 160) : null; };
+  const monto = re => { const w = ventana(re); if (!w) return null; const a = reMontos().exec(w); return a ? montoDe(a) : null; };
+  const fechaV = re => { const w = ventana(re); if (!w) return null; const a = RE_FECHA_EN.exec(w); return a ? fechaDe(a[1], a[2], a[3], hoy()) : null; };
+  const pctV = re => { const w = ventana(re); if (!w) return null; const a = /(\d{1,3}(?:\.\d{1,4})?)\s?%/.exec(w); const v = a ? parseFloat(a[1]) : null; return v > 0 && v < 200 ? v : null; };
+  return {
+    pagoNoInt: monto(/pago\s+para\s+no\s+generar\s+intereses/i),
+    pagoMin: monto(/pago\s+m[ií]nimo/i),
+    saldo: monto(/saldo\s+(?:deudor\s+)?(?:total|al\s+corte|nuevo|actual)/i),
+    limite: monto(/l[ií]mite\s+de\s+cr[eé]dito/i),
+    corte: fechaV(/fecha\s+(?:de\s+)?corte/i) || fechaV(/periodo\b[^\n]{0,60}?\bal\b/i),
+    limitePago: fechaV(/fecha\s+l[ií]mite\s+de\s+pago|pagar\s+antes\s+de/i),
+    tasa: pctV(/tasa\s+(?:de\s+inter[eé]s\s+)?(?:ordinaria\s+)?anual(?:\s+ordinaria)?/i)
+  };
+}
+function lineaMovimiento(ln, ref){
+  let s = ln.trim(), m = RE_FECHA_INI.exec(s), f = null;
+  if (m) f = fechaDe(m[1], m[2], m[3], ref);
+  else { m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s); if (m) f = fechaDe(m[3], m[2], m[1], ref); }
+  if (!f) return null;
+  s = s.slice(m[0].length).trim();
+  const m2 = RE_FECHA_INI.exec(s);
+  if (m2 && fechaDe(m2[1], m2[2], m2[3], ref)) s = s.slice(m2[0].length).trim();
+  const re = reMontos(), montos = [];
+  let a;
+  while ((a = re.exec(s))) montos.push({ i:a.index, v:montoDe(a), neg:a[1] === '-' || !!(a[4] && a[4].trim()) });
+  if (!montos.length) return null;
+  let desc = s.slice(0, montos[0].i);
+  const cuotas = /\b(\d{1,2})\s+de\s+(\d{1,2})\b/i.exec(s);
+  if (cuotas && montos.length >= 2) {
+    const k = +cuotas[1], n = +cuotas[2];
+    if (n >= 2 && n <= 60 && k >= 1 && k <= n) return { msi:{ desc:limpiarDesc(desc.replace(cuotas[0], ' ')), monto:montos[0].v, meses:n, k } };
+  }
+  const up = sinAcentos(desc).toUpperCase();
+  if (/\b(SALDO|TOTAL|SUBTOTAL|PAGO MINIMO|LIMITE|PERIODO|FECHA)\b/.test(up)) return null;
+  const nota = limpiarDesc(desc);
+  if (nota.replace(/[^\p{L}]/gu, '').length < 2 || !(montos[0].v > 0)) return null;
+  const abono = montos[0].neg || RE_ABONO.test(up);
+  return { fecha:isoDia(f), desc:nota, monto:montos[0].v, abono, cat:abono ? 'Otros' : catDe(up) };
+}
+function analizarEstado(lineas, cuenta){
+  const res = resumenEstado(lineas.join('\n'));
+  let ref = hoy();
+  if (res.corte) ref = res.corte;
+  else if (res.limitePago) { ref = new Date(res.limitePago); ref.setDate(ref.getDate() - 20); }
+  const movs = [], msi = [];
+  for (const ln of lineas) {
+    const t = lineaMovimiento(ln, ref);
+    if (!t) continue;
+    if (t.msi) msi.push(t.msi);
+    else {
+      t.dup = state.movimientos.some(x => x.fecha === t.fecha && Math.abs(num(x.monto) - t.monto) < 0.005 && x.metodo === cuenta);
+      t.on = !t.abono && !t.dup;
+      movs.push(t);
+    }
+  }
+  const c = state.tarjetas.find(x => x.id === cuenta), cambios = [], msiNuevas = [];
+  if (c) {
+    const ymRef = ymDe(ref);
+    msi.forEach(p => {
+      if (c.msi.some(q => Math.abs(num(q.monto) - p.monto) < 1 && num(q.meses) === p.meses)) return;
+      if (msiNuevas.some(q => Math.abs(q.monto - p.monto) < 1 && q.meses === p.meses)) return;
+      msiNuevas.push(Object.assign(p, { inicio:ymAdd(ymRef, -(p.k - 1)), on:true }));
+    });
+    const cuotaNuevas = sum(msiNuevas, p => p.monto / p.meses);
+    const base = res.pagoNoInt != null ? res.pagoNoInt : res.saldo;
+    if (base != null) {
+      const v = Math.max(0, Math.round((base - msiMes(c) - cuotaNuevas) * 100) / 100);
+      if (Math.abs(v - num(c.saldo)) > 0.5) cambios.push({ k:'saldo', base, label:'Saldo que genera intereses', txt:m2(v), antes:m2(num(c.saldo)), on:true });
+    }
+    if (res.tasa != null && Math.abs(res.tasa - num(c.tasa)) > 0.001) cambios.push({ k:'tasa', v:res.tasa, label:'Tasa de interés anual', txt:tasaTxt(res.tasa), antes:tasaTxt(c.tasa), on:true });
+    if (res.limite != null && Math.abs(res.limite - num(c.limite)) > 0.5) cambios.push({ k:'limite', v:res.limite, label:'Límite de crédito', txt:m0(res.limite), antes:num(c.limite) ? m0(num(c.limite)) : 'sin dato', on:true });
+    if (res.corte && res.corte.getDate() !== c.diaCorte) cambios.push({ k:'diaCorte', v:res.corte.getDate(), label:'Día de corte', txt:'día ' + res.corte.getDate(), antes:c.diaCorte ? 'día ' + c.diaCorte : 'sin dato', on:true });
+    if (res.limitePago && res.limitePago.getDate() !== c.diaPago) cambios.push({ k:'diaPago', v:res.limitePago.getDate(), label:'Día límite de pago', txt:'día ' + res.limitePago.getDate(), antes:c.diaPago ? 'día ' + c.diaPago : 'sin dato', on:true });
+  }
+  const info = [];
+  if (res.pagoMin != null) info.push('pago mínimo ' + m2(res.pagoMin));
+  if (res.pagoNoInt != null) info.push('pago para no generar intereses ' + m2(res.pagoNoInt));
+  if (res.limitePago) info.push('fecha límite ' + fechaCorta(res.limitePago));
+  return { cuenta, movs, msi:msiNuevas, cambios, info:info.length ? 'Tu estado de cuenta dice: ' + info.join(' · ') + '.' : '' };
+}
+async function procesarArchivo(file){
+  const est = byId('imp-estado'), inp = byId('imp-file');
+  if (!file) return;
+  if (!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') { est.textContent = 'Solo podemos leer estados de cuenta en PDF.'; inp.value = ''; return; }
+  if (file.size > 25 * 1024 * 1024) { est.textContent = 'Ese PDF pesa más de 25 MB. Descarga de tu banco solo el estado de cuenta del mes.'; inp.value = ''; return; }
+  const cuenta = byId('imp-cuenta').value;
+  imp = null; renderRevision();
+  est.textContent = 'Leyendo el estado de cuenta en tu navegador…';
+  let bytes = null, lineas = null;
+  try {
+    bytes = new Uint8Array(await file.arrayBuffer());
+    lineas = await lineasDePDF(bytes);
+  } catch (e) {
+    const nombre = e && e.name;
+    est.textContent = e && e.tipo === 'cdn' ? 'No pudimos cargar el lector de PDF. Revisa tu conexión a internet e intenta de nuevo.'
+      : nombre === 'PasswordException' ? 'No abrimos el archivo porque hace falta su contraseña.'
+      : 'No pudimos leer este PDF. Si es una foto o un escaneo, no tiene texto que la app pueda leer.';
+    return;
+  } finally {
+    try { if (bytes) bytes.fill(0); } catch (e) {}
+    bytes = null; inp.value = '';
+    if (claveResolver) claveResolver(null);
+  }
+  if (!lineas.length) { est.textContent = 'Este PDF no tiene texto: parece una foto o un escaneo. Descarga de tu banco el estado de cuenta original.'; return; }
+  const r = analizarEstado(lineas, cuenta);
+  lineas.length = 0; lineas = null;
+  if (!r.movs.length && !r.msi.length && !r.cambios.length) {
+    est.textContent = 'Leímos el archivo, pero no encontramos movimientos. Puede que tu banco use un formato que la app todavía no reconoce. El archivo ya se descartó.';
+    return;
+  }
+  imp = r;
+  est.textContent = 'Listo. El archivo ya se descartó; esto es lo que encontramos. Nada se guarda hasta que lo confirmes.';
+  renderRevision();
+}
+function renderRevision(){
+  const el = byId('imp-revision'); if (!el) return;
+  if (!imp) { el.hidden = true; el.innerHTML = ''; return; }
+  el.hidden = false;
+  const c = state.tarjetas.find(t => t.id === imp.cuenta);
+  const g = imp.movs.filter(m => !m.abono), ab = imp.movs.filter(m => m.abono), dups = imp.movs.filter(m => m.dup);
+  let h = '';
+  if (imp.movs.length) h += `<p class="note-line">Encontramos <b>${plural(imp.movs.length, 'movimiento', 'movimientos')}</b>: ${plural(g.length, 'cargo', 'cargos')} por <b>${esc(m0(sum(g, m => m.monto)))}</b>` +
+    (ab.length ? ` y ${plural(ab.length, 'pago o abono', 'pagos o abonos')} que dejamos sin marcar` : '') +
+    (dups.length ? `. ${dups.length === 1 ? 'Uno ya estaba' : dups.length + ' ya estaban'} en tu registro` : '') + '. Desmarca lo que no quieras agregar.</p>';
+  if (imp.info) h += `<p class="fld-h">${esc(imp.info)}</p>`;
+  if (c && imp.cambios.length) h += `<fieldset class="imp-sec"><legend class="fld-l">Actualizar ${esc(c.nombre || 'tu tarjeta')}</legend>` +
+    imp.cambios.map((x, i) => `<label class="check"><input type="checkbox" data-impc="${i}"${x.on ? ' checked' : ''}><span>${esc(x.label)}: <b>${esc(x.txt)}</b> <span class="muted">(ahora ${esc(x.antes)})</span></span></label>`).join('') + '</fieldset>';
+  if (c && imp.msi.length) h += `<fieldset class="imp-sec"><legend class="fld-l">Compras a meses sin intereses</legend>` +
+    imp.msi.map((p, i) => `<label class="check"><input type="checkbox" data-impmsi="${i}"${p.on ? ' checked' : ''}><span>${esc(p.desc || 'Compra a meses')} · ${esc(m0(p.monto))} a ${p.meses} meses <span class="muted">(vas en el pago ${p.k} de ${p.meses})</span></span></label>`).join('') + '</fieldset>';
+  if (imp.movs.length) h += `<div class="table-wrap scroll-y"><table class="tbl imp-tbl"><thead><tr>
+      <th><input type="checkbox" id="imp-todos" aria-label="Marcar todos los cargos"${g.every(m => m.on) ? ' checked' : ''}></th><th>Fecha</th><th>Comercio</th><th>Categoría</th><th class="n">Monto</th></tr></thead><tbody>` +
+    imp.movs.map((m, i) => `<tr class="${m.on ? '' : 'off'}">
+      <td><input type="checkbox" data-impm="${i}"${m.on ? ' checked' : ''} aria-label="Agregar ${esc(m.desc)}"></td>
+      <td class="nowrap">${esc(fechaCorta(parseISO(m.fecha)))}</td>
+      <td><input class="in in-sm" data-impd="${i}" value="${esc(m.desc)}" maxlength="60" aria-label="Comercio">${m.abono ? '<span class="tag">Pago o abono</span>' : ''}${m.dup ? '<span class="tag">Ya estaba anotado</span>' : ''}</td>
+      <td><select class="in in-sm" data-impcat="${i}" aria-label="Categoría">${catOpts(m.cat)}</select></td>
+      <td class="n">${esc(m2(m.monto))}</td></tr>`).join('') + '</tbody></table></div>';
+  h += '<div class="imp-acc"><button class="btn" type="button" id="imp-ok"></button><button class="btn-quiet" type="button" id="imp-no">Descartar todo</button></div>';
+  el.innerHTML = h;
+  botonImp();
+}
+function botonImp(){
+  const b = byId('imp-ok'); if (!b || !imp) return;
+  const sel = imp.movs.filter(m => m.on), extra = imp.cambios.some(x => x.on) || imp.msi.some(p => p.on);
+  b.textContent = sel.length ? `Agregar ${plural(sel.length, 'gasto', 'gastos')} (${m0(sum(sel, m => m.monto))})` : extra ? 'Actualizar mi tarjeta' : 'Nada marcado';
+  b.disabled = !sel.length && !extra;
+}
+function confirmarImp(){
+  if (!imp) return;
+  const sel = imp.movs.filter(m => m.on);
+  sel.forEach(m => state.movimientos.push({ id:uid(), fecha:m.fecha, monto:m.monto, cat:m.cat, nota:limpiarDesc(m.desc), metodo:imp.cuenta, origen:'estado' }));
+  const c = state.tarjetas.find(t => t.id === imp.cuenta);
+  let nMsi = 0, nCamb = 0;
+  if (c) {
+    imp.msi.filter(p => p.on).forEach(p => { c.msi.push({ id:uid(), desc:p.desc, monto:p.monto, meses:p.meses, inicio:p.inicio }); nMsi++; });
+    imp.cambios.filter(x => x.on).forEach(x => {
+      c[x.k] = x.k === 'saldo' ? Math.max(0, Math.round((x.base - msiMes(c)) * 100) / 100) : x.v;
+      if (x.k === 'diaPago') c.pagadoHasta = '';
+      nCamb++;
+    });
+  }
+  if (sel.length) diarioMes = sel.map(m => m.fecha.slice(0, 7)).sort().pop();
+  imp = null; renderRevision();
+  byId('imp-estado').textContent = '';
+  renderAll(); cambiado();
+  const partes = [];
+  if (sel.length) partes.push(plural(sel.length, 'gasto', 'gastos'));
+  if (nMsi) partes.push(plural(nMsi, 'compra a meses', 'compras a meses'));
+  toast((partes.length ? 'Agregamos ' + partes.join(' y ') : 'Listo') + (nCamb ? '. Actualizamos los datos de tu tarjeta' : '') + '. El PDF no se guardó.');
+}
+
 /* ================= render general ================= */
 function analisis(){ return new Map(state.tarjetas.map(c => [c.id, analizar(c)])); }
 function analisisPrestamos(){ return new Map(state.prestamos.map(p => [p.id, analizarPrestamo(p)])); }
@@ -1526,8 +1815,20 @@ function itemDe(el){
   const list = state[col];
   return Array.isArray(list) ? list.find(x => x.id === id) : null;
 }
+function impInput(el){
+  if (!imp) return;
+  const d = el.dataset;
+  if (el.id === 'imp-todos') { imp.movs.forEach(m => { if (!m.abono) m.on = el.checked; }); renderRevision(); return; }
+  if ('impm' in d) { const m = imp.movs[+d.impm]; if (m) { m.on = el.checked; el.closest('tr').className = m.on ? '' : 'off'; } }
+  else if ('impd' in d) { const m = imp.movs[+d.impd]; if (m) m.desc = el.value.slice(0, 60); }
+  else if ('impcat' in d) { const m = imp.movs[+d.impcat]; if (m) m.cat = el.value; }
+  else if ('impc' in d) { const x = imp.cambios[+d.impc]; if (x) x.on = el.checked; }
+  else if ('impmsi' in d) { const p = imp.msi[+d.impmsi]; if (p) p.on = el.checked; }
+  botonImp();
+}
 document.addEventListener('input', e => {
   const el = e.target;
+  if (el.id === 'imp-todos' || (el.dataset && ('impm' in el.dataset || 'impd' in el.dataset || 'impcat' in el.dataset || 'impc' in el.dataset || 'impmsi' in el.dataset))) { impInput(el); return; }
   if (el.dataset && el.dataset.col) {
     const it = itemDe(el); if (!it) return;
     const k = el.dataset.k;
@@ -1555,8 +1856,10 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', e => {
   if (e.target.id === 'f-importar' && e.target.files && e.target.files[0]) { importar(e.target.files[0]); e.target.value = ''; }
+  if (e.target.id === 'imp-file' && e.target.files && e.target.files[0]) procesarArchivo(e.target.files[0]);
 });
 document.addEventListener('submit', e => {
+  if (e.target.id === 'imp-clave') { e.preventDefault(); if (claveResolver) claveResolver(byId('imp-clave-in').value); return; }
   if (e.target.id !== 'd-form') return;
   e.preventDefault();
   const monto = Number(byId('d-monto').value), msg = byId('d-msg');
@@ -1621,6 +1924,13 @@ document.addEventListener('click', e => {
   if (d.add) { agregar(d.add, d.parent); return; }
   if (d.del) { quitar(d.del, d.id, d.parent); return; }
   if (d.go) { mostrarTab(d.go); window.scrollTo({ top:0 }); return; }
+  if (d.imp) {
+    mostrarTab('diario');
+    byId('imp-cuenta').value = d.imp;
+    byId('imp-file').click();
+    byId('imp-block').scrollIntoView({ block:'start' });
+    return;
+  }
   if (d.sim) { simDesdeTarjeta(d.sim); simInputs(); renderSimFuente(); renderSim(); mostrarTab('simulador'); window.scrollTo({ top:0 }); return; }
   if (d.tabla) { sim.tabla = d.tabla; renderSim(); return; }
   if (d.metodo) { state.plan.metodo = d.metodo; renderPlan(analisis()); cambiado(); return; }
@@ -1653,6 +1963,10 @@ document.addEventListener('click', e => {
     case 'btn-desconectar': desconectarDrive(); break;
     case 'btn-borrar-drive': dosPasos(b, 'Toca otra vez para borrar tu archivo de Drive', borrarDeDrive); break;
     case 'btn-ics': descargarICS(); break;
+    case 'imp-elegir': byId('imp-file').click(); break;
+    case 'imp-ok': confirmarImp(); break;
+    case 'imp-no': imp = null; renderRevision(); byId('imp-estado').textContent = 'Descartamos todo. No se guardó nada.'; break;
+    case 'imp-clave-no': if (claveResolver) claveResolver(null); break;
     case 'btn-csv': descargarCSV(); break;
     case 'pl-auto': state.plan.presupuesto = null; renderPlan(analisis()); cambiado(); break;
     case 's-meta-use':
@@ -1702,7 +2016,13 @@ function dibujarGuilloche(){
 
 /* ================= arranque ================= */
 byId('app').innerHTML = shellHTML();
-if (PERSONAL) { const uc = local.get(LS_CAT); if (uc && CATS.includes(uc)) byId('d-cat').value = uc; }
+if (PERSONAL) {
+  const uc = local.get(LS_CAT); if (uc && CATS.includes(uc)) byId('d-cat').value = uc;
+  const zona = byId('imp-block'), marca = byId('imp-drop');
+  ['dragenter', 'dragover'].forEach(ev => zona.addEventListener(ev, e => { e.preventDefault(); marca.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => zona.addEventListener(ev, e => { e.preventDefault(); marca.classList.remove('over'); }));
+  zona.addEventListener('drop', e => { const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if (f) procesarArchivo(f); });
+}
 document.querySelector('.tabs').addEventListener('keydown', e => {
   if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
   const btns = $$('[role="tab"]'), i = btns.indexOf(document.activeElement);
