@@ -1,0 +1,2 @@
+# Librerías de terceros: se guardan byte por byte, sin convertir saltos de línea.
+assets/vendor/** -text
