@@ -314,6 +314,31 @@ async function borrarDeDrive(){
     toast('Borramos tus datos de Google Drive y desconectamos la app. Siguen en este navegador.');
   } catch (e) { toast('No pudimos borrar el archivo de Drive. Intenta de nuevo.'); }
 }
+// Borra de verdad: datos, copia de respaldo y preferencias del navegador y, si Drive está conectado,
+// elimina el archivo (con eso Google borra también su historial de versiones) y deja uno en blanco.
+async function borrarTodo(){
+  clearTimeout(saveT); saveT = null;
+  const conDrive = drive.estado === 'ok' && tokenValido();
+  [LS_KEY, LS_RESPALDO, LS_CAT, LS_TAB].forEach(k => local.del(k));
+  state = enBlanco(state); state.actualizado = new Date().toISOString();
+  sim.fuente = null; imp = null; renderRevision();
+  if (conDrive) {
+    try {
+      const f = drive.fileId ? { id:drive.fileId } : await buscarArchivo();
+      if (f) await api('https://www.googleapis.com/drive/v3/files/' + f.id, { method:'DELETE' });
+      drive.fileId = null; drive.mod = null;
+    } catch (e) {
+      renderAll(); local.set(LS_KEY, JSON.stringify(state));
+      toast('Borramos tus datos de este navegador, pero no pudimos borrar el archivo de Drive. Usa “Borrar mis datos de Drive”.');
+      return;
+    }
+  }
+  renderAll();
+  await guardarAhora();
+  toast(conDrive
+    ? 'Borramos todos tus datos de este navegador y de tu Google Drive, incluido su historial de versiones.'
+    : 'Borramos todos tus datos de este navegador.' + (drive.estado === 'expirado' || drive.estado === 'error' ? ' Tu archivo de Drive sigue ahí: reconecta y usa “Borrar mis datos de Drive”.' : ''));
+}
 
 function cambiado(){
   state.actualizado = new Date().toISOString();
@@ -1479,7 +1504,8 @@ function descargar(nombre, contenido, tipo){
 function descargarCSV(){
   const movs = state.movimientos.filter(m => m.fecha.slice(0, 7) === diarioMes).sort((a, b) => a.fecha.localeCompare(b.fecha));
   if (!movs.length) { toast('No hay gastos anotados en ' + ymTxt(diarioMes) + '.'); return; }
-  const q = v => '"' + String(v).replace(/"/g, '""') + '"';
+  // Un texto que empieza con = + - @ se volvería fórmula en Excel; el apóstrofo lo deja como texto.
+  const q = v => { let s = String(v); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; };
   const filas = [['Fecha', 'Categoría', 'Nota', 'Pagado con', 'Monto']].concat(movs.map(m => [m.fecha, m.cat, m.nota, metodoTxt(m.metodo), num(m.monto).toFixed(2)]));
   descargar('gastos-' + diarioMes + '.csv', '\ufeff' + filas.map(f => f.map(q).join(',')).join('\r\n'), 'text/csv;charset=utf-8');
 }
@@ -1487,14 +1513,14 @@ function descargarICS(){
   const items = state.tarjetas.filter(c => c.diaPago).map(c => ({ id:c.id, dia:c.diaPago, nombre:c.nombre || 'tarjeta' }))
     .concat(state.prestamos.filter(p => p.diaPago && num(p.saldo) > 0).map(p => ({ id:p.id, dia:p.diaPago, nombre:p.nombre || 'préstamo' })));
   if (!items.length) { toast('Primero escribe el día límite de pago de tus tarjetas o préstamos.'); return; }
-  const icsEsc = s => String(s).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+  const icsEsc = s => String(s).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r\n?|\n/g, '\\n');
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
   const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Cuentas Claras//ES', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH'];
   items.forEach(it => {
     const f = proximoVenc(it.dia, ''), sig = new Date(f); sig.setDate(sig.getDate() + 1);
     const dias = []; for (let d = 28; d <= it.dia; d++) dias.push(d);
     const rr = it.dia > 28 ? `RRULE:FREQ=MONTHLY;BYMONTHDAY=${dias.join(',')};BYSETPOS=-1` : `RRULE:FREQ=MONTHLY;BYMONTHDAY=${it.dia}`;
-    L.push('BEGIN:VEVENT', `UID:${it.id}-pago@cuentas-claras`, `DTSTAMP:${stamp}`,
+    L.push('BEGIN:VEVENT', `UID:${String(it.id).replace(/[^\w-]/g, '')}-pago@cuentas-claras`, `DTSTAMP:${stamp}`,
       `DTSTART;VALUE=DATE:${isoDia(f).replace(/-/g, '')}`, `DTEND;VALUE=DATE:${isoDia(sig).replace(/-/g, '')}`, rr,
       `SUMMARY:${icsEsc('Pagar ' + it.nombre)}`,
       `DESCRIPTION:${icsEsc('Fecha límite de pago. Revisa el monto en Cuentas Claras o en tu estado de cuenta.')}`,
@@ -2092,7 +2118,7 @@ document.addEventListener('click', e => {
     case 'btn-blanco': reemplazar(enBlanco(state)); break;
     case 'btn-ocultar': state.ejemplo = false; byId('demo-banner').hidden = true; cambiado(); break;
     case 'btn-ejemplo': dosPasos(b, 'Reemplaza tus datos. ¿Seguro?', () => { local.set(LS_RESPALDO, JSON.stringify(state)); reemplazar(ejemplo(state.pais)); }); break;
-    case 'btn-borrar': dosPasos(b, 'Toca otra vez para borrar todo', () => { local.set(LS_RESPALDO, JSON.stringify(state)); reemplazar(enBlanco(state)); }); break;
+    case 'btn-borrar': dosPasos(b, 'Toca otra vez para borrar todo', borrarTodo); break;
     case 'btn-respaldo': descargar('cuentas-claras' + (PERSONAL ? '-personal' : '') + '-' + isoDia(hoy()) + '.json', JSON.stringify(state, null, 2), 'application/json'); break;
     case 'btn-importar': byId('f-importar').click(); break;
     case 'btn-recuperar': {
