@@ -6,8 +6,8 @@ Calculadora de finanzas personales y de intereses de tarjetas de crédito. Es un
 
 | Página | Dirección | Qué incluye |
 |---|---|---|
-| Versión pública | `https://TU-USUARIO.github.io/cuentas-claras/` | Resumen, presupuesto, tarjetas, simulador de intereses y plan de pagos. Permite elegir el país. |
-| Versión personal | `https://TU-USUARIO.github.io/cuentas-claras/personal/` | Todo lo anterior, más registro diario de gastos, meses sin intereses, fechas de corte y pago, y préstamos. Viene configurada para México. |
+| Versión pública | `https://daxed124.github.io/cuentas-claras/` | Resumen, presupuesto, tarjetas, simulador de intereses y plan de pagos. Permite elegir el país. |
+| Versión personal | `https://daxed124.github.io/cuentas-claras/personal/` | Todo lo anterior, más registro diario de gastos, meses sin intereses, fechas de corte y pago, y préstamos. Viene configurada para México. |
 
 ## Dónde se guardan los datos
 
@@ -78,12 +78,12 @@ Abre `http://localhost:8080` (versión pública) o `http://localhost:8080/person
 1. Entra a [console.cloud.google.com](https://console.cloud.google.com) con tu cuenta de Google y crea un proyecto nuevo llamado "Pluto.WB".
 2. Ve a **APIs y servicios → Biblioteca**, busca **Google Drive API** y toca **Habilitar**.
 3. Ve a **Google Auth Platform** (antes se llamaba "Pantalla de consentimiento de OAuth"):
-   - **Branding / Información de la app:** nombre "Pluto.WB", tu correo de asistencia, y como enlaces la página principal (`https://TU-USUARIO.github.io/cuentas-claras/`) y el aviso de privacidad (`https://TU-USUARIO.github.io/cuentas-claras/privacidad.html`).
+   - **Branding / Información de la app:** nombre "Pluto.WB", tu correo de asistencia, y como enlaces la página principal (`https://daxed124.github.io/cuentas-claras/`) y el aviso de privacidad (`https://daxed124.github.io/cuentas-claras/privacidad.html`).
    - **Público:** elige **Externo**. Mientras esté "En prueba", solo pueden entrar las cuentas que agregues como usuarios de prueba (agrega la tuya).
    - **Acceso a datos:** agrega el permiso `https://www.googleapis.com/auth/drive.appdata`. Google lo clasifica como **no sensible**.
 4. Ve a **Clientes → Crear cliente**, tipo **Aplicación web**. En **Orígenes autorizados de JavaScript** agrega:
    - `http://localhost:8080`
-   - `https://TU-USUARIO.github.io`
+   - `https://daxed124.github.io`
 5. Copia el **ID de cliente** (termina en `.apps.googleusercontent.com`) y pégalo en `config.js`:
 
    ```js
