@@ -2412,26 +2412,44 @@ function mostrarTab(t){
 }
 
 /* banda guilloché */
+// Banda guilloché: se dibuja una vez al tamaño correcto y luego solo se anima la fase.
+let guil = { ctx:null, w:0, h:0, color:'#4636A3', t:0, ultimo:0, raf:0 };
+const quieto = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 function dibujarGuilloche(){
-  const cv = byId('guilloche'), w = cv.clientWidth, h = cv.clientHeight;
+  const cv = byId('guilloche'); if (!cv) return;
+  const w = cv.clientWidth, h = cv.clientHeight;
   if (!w || !h) return;
   const dpr = window.devicePixelRatio || 1;
   cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
-  const ctx = cv.getContext('2d');
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  guil.ctx = cv.getContext('2d'); guil.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  guil.w = w; guil.h = h;
+  guil.color = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#4636A3';
+  pintarGuilloche();
+  if (!quieto() && !guil.raf) guil.raf = requestAnimationFrame(animarGuilloche);
+}
+function pintarGuilloche(){
+  const { ctx, w, h, t } = guil; if (!ctx) return;
   ctx.clearRect(0, 0, w, h);
-  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#4636A3';
-  ctx.lineWidth = 0.75; ctx.globalAlpha = 0.42;
+  ctx.strokeStyle = guil.color; ctx.lineWidth = 0.75; ctx.globalAlpha = 0.42;
   for (let k = 0; k < 10; k++) {
     const ph = k / 10 * Math.PI * 2;
     ctx.beginPath();
     for (let x = 0; x <= w; x += 1.5) {
-      const y = h / 2 + h * 0.4 * Math.sin(x / 26 + ph) * (0.55 + 0.45 * Math.sin(x / 170 + ph / 3));
+      // t desplaza las ondas hacia la derecha y hace "respirar" la envolvente, como un billete que se inclina.
+      const y = h / 2 + h * 0.4 * Math.sin(x / 26 + ph - t * 1.6) * (0.55 + 0.45 * Math.sin(x / 170 + ph / 3 + t * 0.35));
       if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     }
     ctx.stroke();
   }
 }
+function animarGuilloche(ahora){
+  guil.raf = 0;
+  if (quieto()) return;
+  // Unos 30 cuadros por segundo bastan para un movimiento tan lento; el navegador pausa esto si la pestaña no se ve.
+  if (ahora - guil.ultimo >= 33) { guil.t = ahora / 1000; guil.ultimo = ahora; pintarGuilloche(); }
+  guil.raf = requestAnimationFrame(animarGuilloche);
+}
+try { matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', dibujarGuilloche); } catch (e) {}
 
 /* ================= protección: contraseña, bloqueo y modo privado ================= */
 // Ventana para pedir una contraseña. Resuelve con el texto escrito o null si se cancela.
