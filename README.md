@@ -6,8 +6,16 @@ Calculadora de finanzas personales y de intereses de tarjetas de crédito. Es un
 
 | Página | Dirección | Qué incluye |
 |---|---|---|
-| Versión pública | `https://daxed124.github.io/pluto-wb/` | Resumen, presupuesto, tarjetas, simulador de intereses y plan de pagos. Permite elegir el país. |
-| Versión personal | `https://daxed124.github.io/pluto-wb/personal/` | Todo lo anterior, más registro diario de gastos, meses sin intereses, fechas de corte y pago, y préstamos. Viene configurada para México. |
+| Versión pública | `https://daxed124.github.io/pluto-wb/` | Resumen, presupuesto, **cartera de tarjetas con deuda total**, simulador de intereses y plan de pagos. Permite elegir el país entre 11. |
+| Versión personal | `https://daxed124.github.io/pluto-wb/personal/` | Todo lo anterior, más registro diario de gastos, meses sin intereses, fechas de corte y pago con recordatorios, préstamos y lector de estados de cuenta en PDF o fotos. Viene configurada para México. |
+
+## Documentación
+
+| Documento | Qué contiene |
+|---|---|
+| [docs/DISENO.md](docs/DISENO.md) | Estilo visual (tipografía, color, componentes, movimiento), adaptación a pantallas, accesibilidad con contrastes medidos, características por edición, arquitectura y un análisis de fortalezas, debilidades y recomendaciones |
+| [docs/OPTIMIZACION.md](docs/OPTIMIZACION.md) | Qué se limpió y optimizó, mediciones de antes y después, herramientas evaluadas y cómo repetir las revisiones |
+| [privacidad.html](privacidad.html) | Aviso de privacidad que se muestra a quien usa la app |
 
 ## Dónde se guardan los datos
 
@@ -54,6 +62,7 @@ assets/app.js         la app (cálculos, pantallas y conexión con Drive)
 assets/app.css        estilos (incluye las tipografías)
 assets/icono.svg      ícono
 herramientas/         revisiones de código, CSS y pantallas (ver docs/OPTIMIZACION.md)
+docs/DISENO.md        estilo, características y análisis de la app
 docs/OPTIMIZACION.md  qué se limpió y optimizó, herramientas evaluadas y cómo repetir las revisiones
 assets/vendor/        PDF.js 4.10.38, Tesseract.js 6.0.1 (núcleo 6.0.0, español 4.0.0_best_int)
                       y tipografías Archivo e IBM Plex Mono. Licencias: Apache 2.0 y SIL OFL 1.1

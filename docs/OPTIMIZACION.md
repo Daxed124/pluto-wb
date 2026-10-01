@@ -1,5 +1,7 @@
 # Optimización y limpieza de Pluto.WB
 
+Para el estilo, las características y el análisis general de la app, ver [DISENO.md](DISENO.md).
+
 Revisión del 1 de octubre de 2026. El objetivo era quitar código basura y hacer la app más ligera sin perder ninguna función ni cambiar nada de lo que se ve.
 
 ## Resumen
