@@ -54,6 +54,15 @@ function fecha(n){ const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() +
 const CATS = ['Vivienda','Comida','Transporte','Servicios','Salud','Educación','Deudas y préstamos','Entretenimiento','Ropa y cuidado personal','Ahorro e inversión','Otros'];
 const FRECS = { mensual:['Mensual', 1], quincenal:['Quincenal', 2], semanal:['Semanal', 52 / 12], anual:['Anual', 1 / 12] };
 const TIPOS = { personal:'Personal', auto:'Automotriz', nomina:'Nómina', hipoteca:'Hipotecario', otro:'Otro' };
+// Colores de las tarjetas en la cartera. Son fijos (no dependen del tema) y todos llevan texto blanco legible.
+const COLORES = {
+  indigo:['Índigo', '#2D2A6E'], petroleo:['Petróleo', '#0E5466'], bosque:['Bosque', '#1F5A3A'], vino:['Vino', '#6B1E36'],
+  cobre:['Cobre', '#8A3F1C'], grafito:['Grafito', '#2F3437'], oro:['Oro viejo', '#7A5A12'], ciruela:['Ciruela', '#4B2462']
+};
+const ORDEN_COLORES = Object.keys(COLORES);
+const colorDe = c => (COLORES[c.color] || COLORES.indigo)[1];
+// "BBVA ··1234": el nombre más los últimos 4 dígitos, para distinguir tarjetas parecidas.
+const nombreTarjeta = (c, vacio) => (c.nombre || vacio || 'Tarjeta sin nombre') + (c.ult4 ? ' ··' + c.ult4 : '');
 // f: escala de los montos de ejemplo respecto a pesos mexicanos. Solo sirve para que el ejemplo se vea razonable.
 const PAISES = {
   MX:{ n:'México', moneda:'MXN', iva:16, f:1, tasas:[54, 72, 38] },
@@ -81,8 +90,8 @@ function redondo(x){
   const p = Math.pow(10, Math.floor(Math.log10(x)) - 1);
   return Math.round(x / p) * p;
 }
-function nuevaTarjeta(nombre){
-  return { id:uid(), nombre:nombre || 'Nueva tarjeta', saldo:0, tasa:0, limite:0, minTipo:'int', minPct:1.5, minFijo:200, pago:0, diaCorte:0, diaPago:0, pagadoHasta:'', msi:[] };
+function nuevaTarjeta(nombre, i){
+  return { id:uid(), nombre:nombre || 'Nueva tarjeta', color:ORDEN_COLORES[(i || 0) % ORDEN_COLORES.length], ult4:'', saldo:0, tasa:0, limite:0, minTipo:'int', minPct:1.5, minFijo:200, pago:0, diaCorte:0, diaPago:0, pagadoHasta:'', msi:[] };
 }
 function nuevoPrestamo(){
   return { id:uid(), nombre:'Nuevo préstamo', tipo:'personal', saldo:0, tasa:0, pago:0, extra:0, diaPago:0, conIva:true, pagadoHasta:'' };
@@ -91,9 +100,9 @@ function ejemplo(pais){
   pais = PERSONAL ? 'MX' : (PAISES[pais] ? pais : 'MX');
   const P = PAISES[pais], f = v => redondo(v * P.f), t = P.tasas, ym = ymDe(hoy());
   const tarjetas = [
-    { id:uid(), nombre:'Tarjeta clásica', saldo:f(28400), tasa:t[0], limite:f(40000), minTipo:'int', minPct:1.5, minFijo:f(200), pago:f(2500), diaCorte:3, diaPago:23, pagadoHasta:'', msi:[] },
-    { id:uid(), nombre:'Tarjeta de tienda departamental', saldo:f(6900), tasa:t[1], limite:f(10000), minTipo:'int', minPct:1.5, minFijo:f(200), pago:f(800), diaCorte:12, diaPago:2, pagadoHasta:'', msi:[] },
-    { id:uid(), nombre:'Tarjeta digital', saldo:f(12300), tasa:t[2], limite:f(25000), minTipo:'int', minPct:1.5, minFijo:f(200), pago:f(1200), diaCorte:20, diaPago:10, pagadoHasta:'', msi:[] }
+    { id:uid(), nombre:'Tarjeta clásica', color:'indigo', ult4:'4821', saldo:f(28400), tasa:t[0], limite:f(40000), minTipo:'int', minPct:1.5, minFijo:f(200), pago:f(2500), diaCorte:3, diaPago:23, pagadoHasta:'', msi:[] },
+    { id:uid(), nombre:'Tarjeta de tienda departamental', color:'vino', ult4:'0937', saldo:f(6900), tasa:t[1], limite:f(10000), minTipo:'int', minPct:1.5, minFijo:f(200), pago:f(800), diaCorte:12, diaPago:2, pagadoHasta:'', msi:[] },
+    { id:uid(), nombre:'Tarjeta digital', color:'petroleo', ult4:'', saldo:f(12300), tasa:t[2], limite:f(25000), minTipo:'int', minPct:1.5, minFijo:f(200), pago:f(1200), diaCorte:20, diaPago:10, pagadoHasta:'', msi:[] }
   ];
   const s = {
     v:2, ejemplo:true, pais, moneda:P.moneda, iva:P.iva, actualizado:null,
@@ -150,8 +159,9 @@ function normalizar(s){
     actualizado: typeof s.actualizado === 'string' ? s.actualizado : null,
     ingresos: arr(s.ingresos).map(x => ({ id:id(x.id), concepto:str(x.concepto), frec:FRECS[x.frec] ? x.frec : 'mensual', monto:n(x.monto) })),
     gastos: arr(s.gastos).map(x => ({ id:id(x.id), concepto:str(x.concepto), cat:CATS.includes(x.cat) ? x.cat : 'Otros', frec:FRECS[x.frec] ? x.frec : 'mensual', monto:n(x.monto) })),
-    tarjetas: arr(s.tarjetas).map(c => ({
+    tarjetas: arr(s.tarjetas).map((c, i) => ({
       id:id(c.id), nombre:str(c.nombre), saldo:n(c.saldo), tasa:n(c.tasa), limite:n(c.limite),
+      color:COLORES[c.color] ? c.color : ORDEN_COLORES[i % ORDEN_COLORES.length], ult4:/^\d{4}$/.test(c.ult4) ? c.ult4 : '',
       minTipo:c.minTipo === 'pct' ? 'pct' : 'int', minPct:c.minPct == null ? 1.5 : n(c.minPct), minFijo:c.minFijo == null ? 200 : n(c.minFijo),
       pago:n(c.pago), diaCorte:dia(c.diaCorte), diaPago:dia(c.diaPago), pagadoHasta:esISO(c.pagadoHasta) ? c.pagadoHasta : '',
       msi: arr(c.msi).map(p => ({ id:id(p.id), desc:str(p.desc), monto:n(p.monto), meses:Math.max(1, Math.round(n(p.meses)) || 1), inicio:typeof p.inicio === 'string' ? p.inicio.slice(0, 7) : ymDe(hoy()) }))
@@ -889,6 +899,18 @@ function presupuestoHTML(){
 }
 function tarjetasHTML(){
   return `
+  <article class="block cartera" aria-labelledby="cartera-t">
+    <div class="cartera-total">
+      <div class="cartera-cifra">
+        <p class="label" id="cartera-t">Deuda total en tus tarjetas</p>
+        <p class="cartera-num" id="cartera-total"></p>
+        <p class="hero-sub" id="cartera-sub"></p>
+      </div>
+      <dl class="kv kv-4" id="cartera-kv"></dl>
+    </div>
+    <div id="cartera-reparto"></div>
+    <div class="wallet" id="wallet" aria-label="Tus tarjetas"></div>
+  </article>
   <div class="block cfg-row">
     <label class="fld" for="cfg-iva"><span class="fld-l">Impuesto sobre intereses</span><span class="in-suffix"><input class="in num" id="cfg-iva" type="number" inputmode="decimal" min="0" step="any" placeholder="0"><span>%</span></span></label>
     <p class="fld-h">En México los bancos cobran 16% de IVA sobre los intereses. Si en tu país no aplica, déjalo en 0.</p>
@@ -1080,14 +1102,20 @@ function msiHTML(c){
 function renderTarjetasEd(){
   const el = byId('t-cards');
   if (!state.tarjetas.length) { el.innerHTML = '<p class="empty">No tienes tarjetas registradas. Agrega una para ver cuánto te cuesta.</p>'; return; }
-  el.innerHTML = state.tarjetas.map(c => `<article class="card-ed">
+  el.innerHTML = state.tarjetas.map(c => `<article class="card-ed" id="ed-${esc(c.id)}">
     <div class="card-ed-head">
+      <span class="card-sw" style="background:${colorDe(c)}" aria-hidden="true"></span>
       <label class="sr" for="tarjetas-${esc(c.id)}-nombre">Nombre de la tarjeta</label>
       <input class="card-name" ${attrs('tarjetas', c, 'nombre')} value="${esc(c.nombre)}" placeholder="Nombre de la tarjeta">
       <button class="btn-quiet" type="button" data-del="tarjetas" data-id="${esc(c.id)}">Quitar</button>
     </div>
     <div class="card-ed-body">
       <div class="fields">
+        <label class="fld" for="tarjetas-${esc(c.id)}-color"><span class="fld-l">Color en tu cartera</span>
+          <select class="in" ${attrs('tarjetas', c, 'color')}>${opts(ORDEN_COLORES.map(k => [k, COLORES[k][0]]), c.color)}</select></label>
+        <label class="fld" for="tarjetas-${esc(c.id)}-ult4"><span class="fld-l">Últimos 4 dígitos</span>
+          <input class="in num" type="text" inputmode="numeric" autocomplete="off" ${attrs('tarjetas', c, 'ult4')} value="${esc(c.ult4)}" placeholder="Opcional">
+          <span class="fld-h">Solo para distinguirla. Nunca escribas el número completo.</span></label>
         ${campo('tarjetas', c, 'saldo', PERSONAL ? 'Saldo que genera intereses' : 'Saldo actual', '', PERSONAL ? 'Sin contar las compras a meses' : '')}
         ${campo('tarjetas', c, 'tasa', 'Tasa de interés anual', '%')}
         ${campo('tarjetas', c, 'pago', PERSONAL ? 'Tu pago mensual al saldo' : 'Tu pago mensual', '', PERSONAL ? 'Las mensualidades a meses se suman aparte' : 'Lo que piensas pagar cada mes')}
@@ -1236,6 +1264,48 @@ function renderPrestamosOut(AP){
   });
 }
 
+/* cartera: las tarjetas como en una billetera, más el total de la deuda entre todas */
+function renderCartera(A){
+  const tot = byId('cartera-total'); if (!tot) return;
+  const cs = state.tarjetas, deuda = c => { const a = A.get(c.id); return a.b + a.msiPend; };
+  const total = sum(cs, deuda), msiPend = sum(cs, c => A.get(c.id).msiPend);
+  const conLim = cs.filter(c => num(c.limite) > 0), lim = sum(conLim, c => num(c.limite)), usado = sum(conLim, c => A.get(c.id).b + A.get(c.id).msiPend);
+  const intMes = sum(cs, c => { const a = A.get(c.id); return a.i + a.iv; });
+  const pagosMes = sum(cs, c => { const a = A.get(c.id); return a.pago + a.msi; });
+  const conDeuda = cs.filter(c => deuda(c) > 0.005);
+  tot.textContent = m0(total);
+  byId('cartera-sub').textContent = !cs.length ? 'Agrega tus tarjetas para ver cuánto debes en total.'
+    : `En ${plural(conDeuda.length, 'tarjeta', 'tarjetas')} de ${cs.length}` + (msiPend > 0 ? `. Incluye ${m0(msiPend)} de compras a meses.` : '.');
+  byId('cartera-kv').innerHTML = [
+    ['Crédito disponible', lim > 0 ? m0(Math.max(0, lim - usado)) : '—'],
+    ['Uso de tus límites', lim > 0 ? pct(usado / lim) : '—'],
+    ['Intereses este mes', m0(intMes)],
+    ['Pagas este mes', m0(pagosMes)]
+  ].map(([l, v]) => `<div><dt>${esc(l)}</dt><dd>${esc(v)}</dd></div>`).join('');
+
+  // Reparto de la deuda: un segmento por tarjeta, con el color que eligió la persona.
+  const rep = byId('cartera-reparto');
+  if (conDeuda.length < 2) rep.innerHTML = '';
+  else rep.innerHTML = `<div class="stack stack-sm" role="img" aria-label="Cuánto debes en cada tarjeta">${conDeuda.map(c => `<span class="st-seg" style="flex:${deuda(c).toFixed(2)} 1 0;background:${colorDe(c)}" data-tip="${esc(nombreTarjeta(c) + ': ' + m0(deuda(c)) + ' · ' + pct(deuda(c) / total) + ' de tu deuda')}"></span>`).join('')}</div>
+    <ul class="legend">${conDeuda.map(c => `<li><span class="sw" style="background:${colorDe(c)}"></span>${esc(nombreTarjeta(c))} <b>${esc(m0(deuda(c)))}</b><span class="muted">${esc(pct(deuda(c) / total))}</span></li>`).join('')}</ul>`;
+
+  byId('wallet').innerHTML = cs.map(c => {
+    const a = A.get(c.id), d = deuda(c), u = num(c.limite) > 0 ? (a.b + a.msiPend) / num(c.limite) : null;
+    let pie;
+    if (PERSONAL && c.diaPago && d > 0) pie = 'Paga el ' + fechaCorta(proximoVenc(c.diaPago, c.pagadoHasta));
+    else if (u != null) pie = 'Usas ' + pct(u);
+    else pie = num(c.tasa) ? tasaTxt(c.tasa) + ' anual' : '';
+    const e = estadoTarjeta(a);
+    return `<button class="tcard" type="button" style="--c:${colorDe(c)}" data-ir-tarjeta="${esc(c.id)}" aria-label="${esc(nombreTarjeta(c) + ': debes ' + m0(d) + '. Ver y editar')}">
+      <span class="tcard-top"><span class="tcard-nombre">${esc(c.nombre || 'Tarjeta sin nombre')}</span><span class="tcard-chip" aria-hidden="true"></span></span>
+      <span class="tcard-saldo"><span class="tcard-l">${d > 0 ? 'Debes' : 'Sin deuda'}</span><b>${esc(m0(d))}</b></span>
+      <span class="tcard-pie"><span class="tcard-num">${c.ult4 ? '•••• ' + esc(c.ult4) : '•••• ····'}</span><span>${esc(pie)}</span></span>
+      ${u != null ? `<span class="tcard-uso" aria-hidden="true"><span style="width:${Math.min(100, u * 100).toFixed(1)}%"></span></span>` : ''}
+      ${d > 0 && e[0] === 'bad' ? `<span class="tcard-alerta">${esc(e[1])}</span>` : ''}
+    </button>`;
+  }).join('') + '<button class="tcard tcard-nueva" type="button" data-add="tarjetas"><span>+ Agregar tarjeta</span></button>';
+}
+
 function renderResumen(A, AP){
   const ing = sum(state.ingresos, mensual), gas = sum(state.gastos, mensual);
   const pagosTar = sum(state.tarjetas, c => A.get(c.id).pago);
@@ -1318,14 +1388,14 @@ function renderResumen(A, AP){
   if (!state.tarjetas.length) tb.innerHTML = '<tbody><tr><td class="empty">Agrega una tarjeta en la pestaña Tarjetas.</td></tr></tbody>';
   else tb.innerHTML = `<thead><tr><th>Tarjeta</th><th class="n">Saldo</th><th class="n">Tasa anual</th><th class="n">Interés del mes</th><th class="n">La liquidas en</th><th>Estado</th></tr></thead><tbody>` +
     state.tarjetas.map(c => { const a = A.get(c.id), e = estadoTarjeta(a); return `<tr>
-      <td class="tn">${esc(c.nombre || 'Sin nombre')}</td><td class="n">${esc(m0(a.b))}</td><td class="n">${esc(tasaTxt(c.tasa))}</td>
+      <td class="tn"><span class="dot" style="background:${colorDe(c)}"></span>${esc(nombreTarjeta(c, 'Sin nombre'))}</td><td class="n">${esc(m0(a.b))}</td><td class="n">${esc(tasaTxt(c.tasa))}</td>
       <td class="n">${esc(m2(a.i + a.iv))}</td><td class="n">${a.b <= 0 ? '—' : a.sTu ? esc(durS(a.sTu)) : '—'}</td><td>${chip(e[0], e[1])}</td></tr>`; }).join('') + '</tbody>';
 
   const cara = state.tarjetas.filter(c => num(c.saldo) > 0).sort((x, y) => num(y.tasa) - num(x.tasa))[0];
   const ins = byId('r-insight');
   if (cara && num(cara.tasa) > 0) {
     const costo = 1000 * num(cara.tasa) / 1200 * (1 + num(state.iva) / 100);
-    ins.innerHTML = `Tu tarjeta más cara es <b>${esc(cara.nombre || 'sin nombre')}</b>: con ${esc(tasaTxt(cara.tasa))} anual, cada ${esc(m0(1000))} que le debes te cuesta <b>${esc(m2(costo))}</b> de intereses al mes.`;
+    ins.innerHTML = `Tu tarjeta más cara es <b>${esc(nombreTarjeta(cara, 'sin nombre'))}</b>: con ${esc(tasaTxt(cara.tasa))} anual, cada ${esc(m0(1000))} que le debes te cuesta <b>${esc(m2(costo))}</b> de intereses al mes.`;
     ins.hidden = false;
   } else ins.hidden = true;
 
@@ -1371,7 +1441,7 @@ function renderPagos(A){
     if (!c.diaPago) return;
     const a = A.get(c.id); if (a.b <= 0 && !a.msi) return;
     const corte = c.diaCorte ? proximoVenc(c.diaCorte, '') : null;
-    items.push({ tipo:'tarjeta', id:c.id, nombre:c.nombre || 'Tarjeta', f:proximoVenc(c.diaPago, c.pagadoHasta), ph:c.pagadoHasta,
+    items.push({ tipo:'tarjeta', id:c.id, nombre:nombreTarjeta(c, 'Tarjeta'), f:proximoVenc(c.diaPago, c.pagadoHasta), ph:c.pagadoHasta,
       meta:`Para no generar intereses: ${m0(a.b + a.msi)} · Mínimo: ${m0(a.min + a.msi)}` + (corte ? ` · Próximo corte: ${fechaCorta(corte)}` : '') });
   });
   state.prestamos.forEach(p => {
@@ -1399,15 +1469,15 @@ function metodoTxt(m){
   if (m === 'efectivo') return 'Efectivo';
   if (m === 'debito') return 'Débito o transferencia';
   const c = state.tarjetas.find(t => t.id === m);
-  return c ? (c.nombre || 'Tarjeta') : 'Tarjeta que ya quitaste';
+  return c ? nombreTarjeta(c, 'Tarjeta') : 'Tarjeta que ya quitaste';
 }
 function renderDiario(){
   const sel = byId('d-metodo'); if (!sel) return;
   const prev = sel.value || 'debito';
-  sel.innerHTML = opts([['efectivo', 'Efectivo'], ['debito', 'Débito o transferencia']].concat(state.tarjetas.map(c => [c.id, c.nombre || 'Tarjeta sin nombre'])), prev);
+  sel.innerHTML = opts([['efectivo', 'Efectivo'], ['debito', 'Débito o transferencia']].concat(state.tarjetas.map(c => [c.id, nombreTarjeta(c)])), prev);
   if (!sel.value) sel.value = 'debito';
   const ic = byId('imp-cuenta'), icPrev = ic.value;
-  ic.innerHTML = opts(state.tarjetas.map(c => [c.id, c.nombre || 'Tarjeta sin nombre']).concat([['debito', 'Cuenta de débito o nómina']]), icPrev);
+  ic.innerHTML = opts(state.tarjetas.map(c => [c.id, nombreTarjeta(c)]).concat([['debito', 'Cuenta de débito o nómina']]), icPrev);
   if (!ic.value) ic.selectedIndex = 0;
   const fd = byId('d-fecha'); if (!fd.value) fd.value = isoDia(hoy());
   byId('d-mes').textContent = ymTxt(diarioMes);
@@ -1470,7 +1540,7 @@ function renderSimFuente(){
     if (!first || !simDesdeTarjeta(first.id)) Object.assign(sim, { fuente:'propio', saldo:redondo(20000 * (PAISES[state.pais] || PAISES.MX).f), tasa:45, iva:num(state.iva), pago:redondo(1500 * (PAISES[state.pais] || PAISES.MX).f) });
     simInputs();
   }
-  sel.innerHTML = state.tarjetas.map(c => `<option value="${esc(c.id)}">${esc(c.nombre || 'Sin nombre')}</option>`).join('') + '<option value="propio">Valores propios</option>';
+  sel.innerHTML = state.tarjetas.map(c => `<option value="${esc(c.id)}">${esc(nombreTarjeta(c, 'Sin nombre'))}</option>`).join('') + '<option value="propio">Valores propios</option>';
   sel.value = sim.fuente;
 }
 function renderSim(){
@@ -1589,7 +1659,7 @@ function renderPlan(A){
   byId('pl-orden').innerHTML = r.orden.map((o, i) => {
     const c = state.tarjetas.find(t => t.id === o.id) || {};
     return `<li><span class="o-n">${i + 1}</span>
-      <div><p class="o-name">${esc(c.nombre || 'Sin nombre')}</p>
+      <div><p class="o-name">${esc(nombreTarjeta(c, 'Sin nombre'))}</p>
       <p class="o-meta">${esc(m0(num(c.saldo)))} · ${esc(tasaTxt(c.tasa))} anual · ${esc(m0(o.ti))} de intereses${o.fin != null ? ' · la liquidas en el mes ' + o.fin : ''}</p></div>
       ${o.fin != null ? `<span class="stamp">Pagada<small>${esc(fecha(o.fin))}</small></span>` : chip('bad', 'No se liquida')}</li>`;
   }).join('');
@@ -2100,6 +2170,7 @@ function renderOutputs(){
   renderResumen(A, AP);
   renderTotalesPresupuesto();
   state.tarjetas.forEach(c => { const el = byId('out-' + c.id); if (el) el.innerHTML = avisoHTML(c, A.get(c.id)); });
+  renderCartera(A);
   if (PERSONAL) { renderMsi(); renderPrestamosOut(AP); renderDiario(); renderPagos(A); }
   renderSimFuente();
   if (sim.fuente && sim.fuente !== 'propio') { simDesdeTarjeta(sim.fuente); if (!simEnfocado()) simInputs(); }
@@ -2145,6 +2216,18 @@ document.addEventListener('input', e => {
     const it = itemDe(el); if (!it) return;
     const k = el.dataset.k;
     if (el.type === 'checkbox') it[k] = el.checked;
+    else if (k === 'ult4') {
+      // Solo dígitos y como máximo 4: así nadie guarda el número completo por error.
+      const dig = el.value.replace(/\D/g, ''), v = dig.slice(-4);
+      if (v !== el.value) el.value = v;
+      if (dig.length > 4) toast('Solo guardamos los últimos 4 dígitos; el resto del número se descartó.');
+      it.ult4 = v.length === 4 ? v : '';
+    }
+    else if (k === 'color') {
+      it.color = COLORES[el.value] ? el.value : it.color;
+      const sw = el.closest('.card-ed') && el.closest('.card-ed').querySelector('.card-sw');
+      if (sw) sw.style.background = colorDe(it);
+    }
     else if (TEXTO.has(k)) it[k] = el.value;
     else it[k] = el.value === '' ? 0 : Number(el.value) || 0;
     if (el.dataset.col === 'ingresos' || el.dataset.col === 'gastos') { const n = byId('note-' + it.id); if (n) n.textContent = notaMensual(it); }
@@ -2196,7 +2279,12 @@ function agregar(col, parent){
   let it, focusId;
   if (col === 'ingresos') it = { id:uid(), concepto:'', frec:'mensual', monto:0 };
   else if (col === 'gastos') it = { id:uid(), concepto:'', cat:'Otros', frec:'mensual', monto:0 };
-  else if (col === 'tarjetas') it = nuevaTarjeta('Tarjeta ' + (state.tarjetas.length + 1));
+  else if (col === 'tarjetas') {
+    // Al agregar, toma el primer color que ninguna otra tarjeta use.
+    const usados = new Set(state.tarjetas.map(t => t.color));
+    const libre = ORDEN_COLORES.findIndex(k => !usados.has(k));
+    it = nuevaTarjeta('Tarjeta ' + (state.tarjetas.length + 1), libre >= 0 ? libre : state.tarjetas.length);
+  }
   else if (col === 'prestamos') it = nuevoPrestamo();
   else if (col === 'msi') {
     const c = state.tarjetas.find(t => t.id === parent); if (!c) return;
@@ -2242,6 +2330,16 @@ document.addEventListener('click', e => {
     byId('imp-cuenta').value = d.imp;
     byId('imp-file').click();
     byId('imp-block').scrollIntoView({ block:'start' });
+    return;
+  }
+  if (d.irTarjeta) {
+    const ed = byId('ed-' + d.irTarjeta);
+    if (ed) {
+      const quieto = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      ed.scrollIntoView({ behavior:quieto ? 'auto' : 'smooth', block:'start' });
+      ed.classList.remove('resalta'); void ed.offsetWidth; ed.classList.add('resalta');
+      const nombre = ed.querySelector('.card-name'); if (nombre) nombre.focus({ preventScroll:true });
+    }
     return;
   }
   if (d.sim) { simDesdeTarjeta(d.sim); simInputs(); renderSimFuente(); renderSim(); mostrarTab('simulador'); window.scrollTo({ top:0 }); return; }
