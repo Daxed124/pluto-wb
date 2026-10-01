@@ -1,4 +1,4 @@
-/* Configuración de Google Drive para Cuentas Claras.
+/* Configuración de Google Drive para Pluto.WB.
    Pega entre las comillas el "ID de cliente" de OAuth que creaste en Google Cloud
    (los pasos están en README.md). Termina en .apps.googleusercontent.com.
    Este ID no es secreto: Google lo diseñó para ir en páginas públicas.

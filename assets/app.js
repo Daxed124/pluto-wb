@@ -1,4 +1,4 @@
-/* Cuentas Claras — código compartido por la versión pública (index.html)
+/* Pluto.WB — código compartido por la versión pública (index.html)
    y la personal (personal/index.html). La personal se activa con <html data-edicion="personal">:
    registro diario, meses sin intereses, fechas de pago y préstamos. */
 (function () {
@@ -502,6 +502,8 @@ function dur(n){
 }
 const durS = s => s.nunca ? 'Nunca' : (s.tope ? 'Más de 50 años' : dur(s.meses));
 const mensual = it => num(it.monto) * (FRECS[it.frec] || FRECS.mensual)[1];
+// Casillas de resumen: [etiqueta, valor, detalle].
+const tilesHTML = lista => lista.map(([l, v, s]) => `<div class="tile"><p class="label">${esc(l)}</p><p class="tile-v">${esc(v)}</p><p class="tile-s">${esc(s)}</p></div>`).join('');
 const chip = (k, t) => `<span class="chip ${k}"><i aria-hidden="true">${k === 'good' ? '✓' : k === 'warn' ? '!' : '✕'}</i>${esc(t)}</span>`;
 
 /* ================= cálculos ================= */
@@ -795,7 +797,7 @@ function shellHTML(){
   <div class="wrap top-row">
     <div class="brand">
       <p class="label">${PERSONAL ? 'Mis finanzas · versión personal' : 'Finanzas personales · intereses de tarjetas'}</p>
-      <h1 class="wordmark">Cuentas <span>Claras</span></h1>
+      <h1 class="wordmark">Pluto<span>.WB</span></h1>
     </div>
     <div class="top-tools">${pais}<button class="btn-g" type="button" id="btn-privado" aria-pressed="false">${ICONO_OJO}<span>Ocultar montos</span></button><div class="cuenta" id="cuenta"></div></div>
   </div>
@@ -1252,11 +1254,11 @@ function renderPrestamosOut(AP){
   const pagos = sum(state.prestamos, p => AP.get(p.id).pagoMes);
   const intm = sum(state.prestamos, p => { const a = AP.get(p.id); return a.i + a.iv; });
   const fin = state.prestamos.map(p => AP.get(p.id)).filter(a => a.s && Number.isFinite(a.s.meses)).map(a => (a.sx || a.s).meses);
-  tiles.innerHTML = [
+  tiles.innerHTML = tilesHTML([
     ['Deuda en préstamos', m0(deuda), plural(state.prestamos.filter(p => num(p.saldo) > 0).length, 'crédito activo', 'créditos activos')],
     ['Pagas al mes', m0(pagos), 'Mensualidades más abonos extra'],
     ['Intereses este mes', m0(intm), fin.length ? 'Terminas el último en ' + fecha(Math.max(...fin)) : 'Escribe tus mensualidades']
-  ].map(([l, v, s]) => `<div class="tile"><p class="label">${esc(l)}</p><p class="tile-v">${esc(v)}</p><p class="tile-s">${esc(s)}</p></div>`).join('');
+  ]);
   state.prestamos.forEach(p => {
     const el = byId('out-pr-' + p.id); if (el) el.innerHTML = avisoPrestamo(p, AP.get(p.id));
     const d = document.querySelector(`details[data-prest="${CSS.escape(p.id)}"]`);
@@ -1367,7 +1369,7 @@ function renderResumen(A, AP){
     ['Intereses este mes', m0(intMes), intMes > 0 ? 'Unos ' + m0(intMes * 12) + ' al año si la deuda no baja' : 'No pagas intereses'],
     ['Ahorro al mes', m0(libreAh), ing > 0 ? pct(libreAh / ing) + ' de tu ingreso, contando lo que te queda libre' : 'Ahorro programado más lo que queda libre']
   ];
-  byId('r-tiles').innerHTML = tiles.map(([l, v, s]) => `<div class="tile"><p class="label">${esc(l)}</p><p class="tile-v">${esc(v)}</p><p class="tile-s">${esc(s)}</p></div>`).join('');
+  byId('r-tiles').innerHTML = tilesHTML(tiles);
 
   const cats = new Map();
   state.gastos.forEach(g => { const v = mensual(g); if (v > 0) cats.set(g.cat, (cats.get(g.cat) || 0) + v); });
@@ -1490,12 +1492,12 @@ function renderDiario(){
   const trans = actual ? hoy().getDate() : dim;
   const conTarjeta = sum(movs.filter(m => state.tarjetas.some(c => c.id === m.metodo)), m => num(m.monto));
   const queda = pres - gastado;
-  byId('d-tiles').innerHTML = [
+  byId('d-tiles').innerHTML = tilesHTML([
     ['Gastado', m0(gastado), plural(movs.length, 'movimiento', 'movimientos') + (conTarjeta ? ` · ${m0(conTarjeta)} con tarjeta` : '')],
     ['Presupuesto del mes', m0(pres), 'Tus gastos planeados en Presupuesto'],
     [queda >= 0 ? 'Te queda' : 'Te pasaste por', m0(Math.abs(queda)), pres > 0 ? pct(gastado / pres) + ' del presupuesto usado' : 'Sin presupuesto para comparar'],
     actual ? ['Al ritmo de hoy', m0(trans ? gastado / trans * dim : 0), 'Lo que gastarías al cerrar el mes'] : ['Promedio por día', m0(futuro ? 0 : gastado / dim), 'Gasto del mes entre ' + dim + ' días']
-  ].map(([l, v, s]) => `<div class="tile"><p class="label">${esc(l)}</p><p class="tile-v">${esc(v)}</p><p class="tile-s">${esc(s)}</p></div>`).join('');
+  ]);
 
   const pc = new Map(), gc = new Map();
   state.gastos.forEach(g => { const v = mensual(g); if (v > 0) pc.set(g.cat, (pc.get(g.cat) || 0) + v); });
@@ -1717,7 +1719,7 @@ function descargarICS(){
   if (!items.length) { toast('Primero escribe el día límite de pago de tus tarjetas o préstamos.'); return; }
   const icsEsc = s => String(s).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r\n?|\n/g, '\\n');
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-  const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Cuentas Claras//ES', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH'];
+  const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Pluto.WB//ES', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH'];
   items.forEach(it => {
     const f = proximoVenc(it.dia, ''), sig = new Date(f); sig.setDate(sig.getDate() + 1);
     const dias = []; for (let d = 28; d <= it.dia; d++) dias.push(d);
@@ -1725,11 +1727,11 @@ function descargarICS(){
     L.push('BEGIN:VEVENT', `UID:${String(it.id).replace(/[^\w-]/g, '')}-pago@cuentas-claras`, `DTSTAMP:${stamp}`,
       `DTSTART;VALUE=DATE:${isoDia(f).replace(/-/g, '')}`, `DTEND;VALUE=DATE:${isoDia(sig).replace(/-/g, '')}`, rr,
       `SUMMARY:${icsEsc('Pagar ' + it.nombre)}`,
-      `DESCRIPTION:${icsEsc('Fecha límite de pago. Revisa el monto en Cuentas Claras o en tu estado de cuenta.')}`,
+      `DESCRIPTION:${icsEsc('Fecha límite de pago. Revisa el monto en Pluto.WB o en tu estado de cuenta.')}`,
       'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsEsc('Pagar ' + it.nombre)}`, 'TRIGGER:-P1DT15H', 'END:VALARM', 'END:VEVENT');
   });
   L.push('END:VCALENDAR');
-  descargar('cuentas-claras-pagos.ics', L.join('\r\n'), 'text/calendar;charset=utf-8');
+  descargar('pluto-wb-pagos.ics', L.join('\r\n'), 'text/calendar;charset=utf-8');
   toast('Abre el archivo descargado para agregar los recordatorios a tu calendario. Te avisa dos días antes de cada pago.');
 }
 function importar(file){
@@ -1748,7 +1750,7 @@ function importar(file){
       }
     }
     const s = raw && (Array.isArray(raw.ingresos) || Array.isArray(raw.tarjetas)) ? normalizar(raw) : null;
-    if (!s) { toast('Ese archivo no es un respaldo de Cuentas Claras.'); return; }
+    if (!s) { toast('Ese archivo no es un respaldo de Pluto.WB.'); return; }
     await guardarRespaldo(state);
     s.ejemplo = false; reemplazar(s);
     toast('Cargamos tu respaldo. Tus datos anteriores quedaron en “Recuperar versión anterior”.');
@@ -2165,17 +2167,32 @@ if (/[?&]depurar\b/.test(location.search)) window.CC_DEPURAR = { lineasDePDF, li
 function analisis(){ return new Map(state.tarjetas.map(c => [c.id, analizar(c)])); }
 function analisisPrestamos(){ return new Map(state.prestamos.map(p => [p.id, analizarPrestamo(p)])); }
 const simEnfocado = () => { const a = document.activeElement; return !!(a && SIM_KEYS[a.id]); };
+// Solo se dibuja la pestaña que se ve; las demás quedan pendientes y se dibujan al abrirlas.
+// Así cada tecla recalcula una pestaña en vez de las siete.
+let tabActual = null;
+const pendientes = new Set();
+function renderTab(t){
+  pendientes.delete(t);
+  const A = analisis();
+  if (t === 'resumen') { renderResumen(A, PERSONAL ? analisisPrestamos() : new Map()); if (PERSONAL) renderPagos(A); }
+  else if (t === 'presupuesto') renderTotalesPresupuesto();
+  else if (t === 'tarjetas') {
+    state.tarjetas.forEach(c => { const el = byId('out-' + c.id); if (el) el.innerHTML = avisoHTML(c, A.get(c.id)); });
+    renderCartera(A);
+    if (PERSONAL) renderMsi();
+  }
+  else if (t === 'prestamos') renderPrestamosOut(analisisPrestamos());
+  else if (t === 'diario') renderDiario();
+  else if (t === 'simulador') {
+    renderSimFuente();
+    if (sim.fuente && sim.fuente !== 'propio') { simDesdeTarjeta(sim.fuente); if (!simEnfocado()) simInputs(); }
+    renderSim();
+  }
+  else if (t === 'plan') renderPlan(A);
+}
 function renderOutputs(){
-  const A = analisis(), AP = PERSONAL ? analisisPrestamos() : new Map();
-  renderResumen(A, AP);
-  renderTotalesPresupuesto();
-  state.tarjetas.forEach(c => { const el = byId('out-' + c.id); if (el) el.innerHTML = avisoHTML(c, A.get(c.id)); });
-  renderCartera(A);
-  if (PERSONAL) { renderMsi(); renderPrestamosOut(AP); renderDiario(); renderPagos(A); }
-  renderSimFuente();
-  if (sim.fuente && sim.fuente !== 'propio') { simDesdeTarjeta(sim.fuente); if (!simEnfocado()) simInputs(); }
-  renderSim();
-  renderPlan(A);
+  TAB_IDS.forEach(t => pendientes.add(t));
+  if (tabActual) renderTab(tabActual);
   byId('demo-banner').hidden = !state.ejemplo;
 }
 function renderAll(){
@@ -2363,7 +2380,7 @@ document.addEventListener('click', e => {
     case 'btn-ejemplo': dosPasos(b, 'Reemplaza tus datos. ¿Seguro?', async () => { await guardarRespaldo(state); reemplazar(ejemplo(state.pais)); }); break;
     case 'btn-borrar': dosPasos(b, 'Toca otra vez para borrar todo', borrarTodo); break;
     case 'btn-respaldo': (async () => {
-      descargar('cuentas-claras' + (PERSONAL ? '-personal' : '') + (cifra.clave ? '-cifrado' : '') + '-' + isoDia(hoy()) + '.json',
+      descargar('pluto-wb' + (PERSONAL ? '-personal' : '') + (cifra.clave ? '-cifrado' : '') + '-' + isoDia(hoy()) + '.json',
         cifra.clave ? await empacar(state) : JSON.stringify(state, null, 2), 'application/json');
       toast(cifra.clave ? 'Descargamos tu respaldo cifrado. Para abrirlo necesitarás tu contraseña.' : 'Descargamos tu respaldo. Guárdalo en un lugar seguro: no está cifrado.');
     })(); break;
@@ -2406,6 +2423,8 @@ function mostrarTab(t){
   if (!TAB_IDS.includes(t)) t = 'resumen';
   $$('[role="tab"]').forEach(b => { const on = b.dataset.tab === t; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; });
   TAB_IDS.forEach(x => { byId('tab-' + x).hidden = x !== t; });
+  tabActual = t;
+  if (pendientes.has(t)) renderTab(t);
   local.set(LS_TAB, t);
   try { history.replaceState(null, '', '#' + t); } catch (e) {}
   hideTip();
@@ -2568,7 +2587,7 @@ function mostrarCandado(){
   byId('app').innerHTML = `<main class="wrap candado">
     <section class="block candado-box" aria-labelledby="cand-t">
       <p class="label">${PERSONAL ? 'Mis finanzas · versión personal' : 'Finanzas personales'}</p>
-      <h1 class="wordmark" id="cand-t">Cuentas <span>Claras</span></h1>
+      <h1 class="wordmark" id="cand-t">Pluto<span>.WB</span></h1>
       <p class="note-line">Tus datos están protegidos con contraseña. Escríbela para abrirlos.</p>
       <form class="candado-form" id="cand-form" autocomplete="off">
         <label class="fld" for="cand-pw"><span class="fld-l">Contraseña</span><input class="in" id="cand-pw" type="password" autocomplete="current-password"></label>

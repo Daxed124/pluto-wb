@@ -1,4 +1,6 @@
-# Cuentas Claras
+# Pluto.WB
+
+> Antes se llamaba "Cuentas Claras". Las claves internas donde se guardan los datos conservan ese nombre (`cuentas-claras.*` en el navegador y `cuentas-claras*.json` en Drive) para que nadie pierda su información ni su sincronización.
 
 Calculadora de finanzas personales y de intereses de tarjetas de crédito. Es un sitio estático (HTML, CSS y JavaScript, sin servidor) que se publica gratis en GitHub Pages.
 
@@ -51,9 +53,15 @@ config.js             aquí va tu ID de cliente de Google
 assets/app.js         la app (cálculos, pantallas y conexión con Drive)
 assets/app.css        estilos (incluye las tipografías)
 assets/icono.svg      ícono
+herramientas/         revisiones de código, CSS y pantallas (ver docs/OPTIMIZACION.md)
+docs/OPTIMIZACION.md  qué se limpió y optimizó, herramientas evaluadas y cómo repetir las revisiones
 assets/vendor/        PDF.js 4.10.38, Tesseract.js 6.0.1 (núcleo 6.0.0, español 4.0.0_best_int)
                       y tipografías Archivo e IBM Plex Mono. Licencias: Apache 2.0 y SIL OFL 1.1
 ```
+
+## Mantenimiento
+
+Antes de publicar cambios, corre las revisiones descritas en [docs/OPTIMIZACION.md](docs/OPTIMIZACION.md): ESLint para el código, `herramientas/revisar-css.js` para el CSS y `herramientas/revisar-pantallas.js` para celular, tableta y computadora.
 
 ## 1. Probarla en tu computadora
 
@@ -67,10 +75,10 @@ Abre `http://localhost:8080` (versión pública) o `http://localhost:8080/person
 
 ## 2. Configurar Google Drive (una sola vez, unos 15 minutos)
 
-1. Entra a [console.cloud.google.com](https://console.cloud.google.com) con tu cuenta de Google y crea un proyecto nuevo llamado "Cuentas Claras".
+1. Entra a [console.cloud.google.com](https://console.cloud.google.com) con tu cuenta de Google y crea un proyecto nuevo llamado "Pluto.WB".
 2. Ve a **APIs y servicios → Biblioteca**, busca **Google Drive API** y toca **Habilitar**.
 3. Ve a **Google Auth Platform** (antes se llamaba "Pantalla de consentimiento de OAuth"):
-   - **Branding / Información de la app:** nombre "Cuentas Claras", tu correo de asistencia, y como enlaces la página principal (`https://TU-USUARIO.github.io/cuentas-claras/`) y el aviso de privacidad (`https://TU-USUARIO.github.io/cuentas-claras/privacidad.html`).
+   - **Branding / Información de la app:** nombre "Pluto.WB", tu correo de asistencia, y como enlaces la página principal (`https://TU-USUARIO.github.io/cuentas-claras/`) y el aviso de privacidad (`https://TU-USUARIO.github.io/cuentas-claras/privacidad.html`).
    - **Público:** elige **Externo**. Mientras esté "En prueba", solo pueden entrar las cuentas que agregues como usuarios de prueba (agrega la tuya).
    - **Acceso a datos:** agrega el permiso `https://www.googleapis.com/auth/drive.appdata`. Google lo clasifica como **no sensible**.
 4. Ve a **Clientes → Crear cliente**, tipo **Aplicación web**. En **Orígenes autorizados de JavaScript** agrega:
