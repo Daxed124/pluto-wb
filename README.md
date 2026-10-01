@@ -13,6 +13,9 @@ Calculadora de finanzas personales y de intereses de tarjetas de crédito. Es un
 
 | Documento | Qué contiene |
 |---|---|
+| [docs/ESTADO.md](docs/ESTADO.md) | **Empieza aquí:** qué funciona hoy, qué falta y en qué orden, y los datos de configuración |
+| [docs/CAMBIOS.md](docs/CAMBIOS.md) | Registro de cambios, del más reciente al más antiguo |
+| [docs/PRUEBAS.md](docs/PRUEBAS.md) | Qué se probó, con qué datos y qué resultado dio, y qué falta probar |
 | [docs/DISENO.md](docs/DISENO.md) | Estilo visual (tipografía, color, componentes, movimiento), adaptación a pantallas, accesibilidad con contrastes medidos, características por edición, arquitectura y un análisis de fortalezas, debilidades y recomendaciones |
 | [docs/OPTIMIZACION.md](docs/OPTIMIZACION.md) | Qué se limpió y optimizó, mediciones de antes y después, herramientas evaluadas y cómo repetir las revisiones |
 | [privacidad.html](privacidad.html) | Aviso de privacidad que se muestra a quien usa la app |
@@ -62,6 +65,9 @@ assets/app.js         la app (cálculos, pantallas y conexión con Drive)
 assets/app.css        estilos (incluye las tipografías)
 assets/icono.svg      ícono
 herramientas/         revisiones de código, CSS y pantallas (ver docs/OPTIMIZACION.md)
+docs/ESTADO.md        qué funciona, pendientes y configuración
+docs/CAMBIOS.md       registro de cambios
+docs/PRUEBAS.md       pruebas hechas y por hacer
 docs/DISENO.md        estilo, características y análisis de la app
 docs/OPTIMIZACION.md  qué se limpió y optimizó, herramientas evaluadas y cómo repetir las revisiones
 assets/vendor/        PDF.js 4.10.38, Tesseract.js 6.0.1 (núcleo 6.0.0, español 4.0.0_best_int)
