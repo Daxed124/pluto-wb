@@ -6,8 +6,8 @@ Calculadora de finanzas personales y de intereses de tarjetas de crédito. Es un
 
 | Página | Dirección | Qué incluye |
 |---|---|---|
-| Versión pública | `https://daxed124.github.io/cuentas-claras/` | Resumen, presupuesto, tarjetas, simulador de intereses y plan de pagos. Permite elegir el país. |
-| Versión personal | `https://daxed124.github.io/cuentas-claras/personal/` | Todo lo anterior, más registro diario de gastos, meses sin intereses, fechas de corte y pago, y préstamos. Viene configurada para México. |
+| Versión pública | `https://daxed124.github.io/pluto-wb/` | Resumen, presupuesto, tarjetas, simulador de intereses y plan de pagos. Permite elegir el país. |
+| Versión personal | `https://daxed124.github.io/pluto-wb/personal/` | Todo lo anterior, más registro diario de gastos, meses sin intereses, fechas de corte y pago, y préstamos. Viene configurada para México. |
 
 ## Dónde se guardan los datos
 
@@ -78,7 +78,7 @@ Abre `http://localhost:8080` (versión pública) o `http://localhost:8080/person
 1. Entra a [console.cloud.google.com](https://console.cloud.google.com) con tu cuenta de Google y crea un proyecto nuevo llamado "Pluto.WB".
 2. Ve a **APIs y servicios → Biblioteca**, busca **Google Drive API** y toca **Habilitar**.
 3. Ve a **Google Auth Platform** (antes se llamaba "Pantalla de consentimiento de OAuth"):
-   - **Branding / Información de la app:** nombre "Pluto.WB", tu correo de asistencia, y como enlaces la página principal (`https://daxed124.github.io/cuentas-claras/`) y el aviso de privacidad (`https://daxed124.github.io/cuentas-claras/privacidad.html`).
+   - **Branding / Información de la app:** nombre "Pluto.WB", tu correo de asistencia, y como enlaces la página principal (`https://daxed124.github.io/pluto-wb/`) y el aviso de privacidad (`https://daxed124.github.io/pluto-wb/privacidad.html`).
    - **Público:** elige **Externo**. Mientras esté "En prueba", solo pueden entrar las cuentas que agregues como usuarios de prueba (agrega la tuya).
    - **Acceso a datos:** agrega el permiso `https://www.googleapis.com/auth/drive.appdata`. Google lo clasifica como **no sensible**.
 4. Ve a **Clientes → Crear cliente**, tipo **Aplicación web**. En **Orígenes autorizados de JavaScript** agrega:
@@ -95,7 +95,7 @@ Abre `http://localhost:8080` (versión pública) o `http://localhost:8080/person
 
 ## 3. Publicar en GitHub Pages
 
-1. Crea un repositorio **público** llamado `cuentas-claras` en tu cuenta de GitHub y sube esta carpeta.
+1. Crea un repositorio **público** llamado `pluto-wb` en tu cuenta de GitHub y sube esta carpeta.
 2. En el repositorio ve a **Settings → Pages**. En **Source** elige **Deploy from a branch**, rama `main`, carpeta `/ (root)`, y guarda.
 3. En uno o dos minutos las páginas estarán en las direcciones de la tabla de arriba.
 
