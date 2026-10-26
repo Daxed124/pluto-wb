@@ -48,6 +48,23 @@ Tarjeta de ejemplo: saldo de $28,400, tasa anual de 54%, IVA de 16% sobre intere
 | Últimos 4 dígitos | Al pegar un número completo, guarda solo los últimos 4 y avisa |
 | Historial de Git antes de publicar | 0 apariciones del Gmail en los commits, y ningún dato del estado de cuenta |
 
+## 3b. Estados de cuenta mes a mes (26 de octubre de 2026)
+
+Dos estados de cuenta inventados de la misma tarjeta, con formato de BBVA. **Agosto:** corte 21 de agosto, $1,500 para no generar intereses, mínimo $300, fecha límite 11 de septiembre. **Septiembre:** corte 21 de septiembre, con dos pagos, de $1,000 el 6 de septiembre y de $500 el 10 de septiembre.
+
+| Prueba | Resultado |
+|---|---|
+| Subir agosto y luego septiembre | Agosto quedó **Pagado completo** con los dos pagos de septiembre. El aviso final lo dijo: "El estado de cuenta del 21 ago quedó: pagado completo" |
+| Datos de la tarjeta | Se actualizaron solos con septiembre: saldo $754.60, tasa 56.62%, límite $18,300, corte el día 21, pago el día 12 |
+| Gastos duplicados | No se duplicaron. Los pagos se guardaron aparte, sin contarse como gastos |
+| Septiembre sin estado de cuenta de octubre (con la fecha límite vencida) | Aparece como **Sin pago registrado**, con la indicación de subir el siguiente estado de cuenta o anotar el pago |
+| Subirlos en desorden (septiembre y luego agosto) | Agosto se guardó en el historial y quedó pagado, pero **no cambió** los datos de la tarjeta, que siguieron con los de septiembre. La revisión avisó que era un estado de cuenta anterior |
+| Anotar a mano $754.60 el 5 de octubre | Septiembre pasó a **Pagado completo** |
+| Simulador: respuesta con $2,500 al mes y con $300 al mes | Con $2,500: "terminas en abr 2028 y pagas $15,180 de intereses… Te ahorras $74,820". Con $300: "la deuda nunca se acaba" |
+| Plan: respuesta con cada método | Avalancha: libre en ene 2028 con $19,503 de intereses. Bola de nieve: feb 2028 con $20,960 |
+| Desbordes a 320 px en las 7 pestañas | 0 |
+| ESLint y CSS sin usar | 0 avisos, 0 clases |
+
 ## 4. Pantallas y rendimiento
 
 | Prueba | Resultado |

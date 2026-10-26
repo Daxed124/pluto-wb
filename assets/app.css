@@ -299,6 +299,27 @@ main.wrap{padding-block:24px 40px;display:grid;gap:20px}
 .mrow-head{grid-template-areas:none!important;border-bottom:1px solid var(--line);padding-block:0 6px}
 .mrow-head span{font-family:var(--f-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
 
+/* Historial de estados de cuenta */
+.hist-sec{display:grid;gap:8px;padding:16px 20px 20px;border-top:1px solid var(--line)}
+.hist{list-style:none;margin:0;padding:0;display:grid}
+.hist-i{display:grid;gap:8px;padding-block:12px;border-bottom:1px solid var(--grid)}
+.hist-i:last-child{border-bottom:0}
+.hist-top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 12px}
+.hist-kv{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.link-sm{font-size:13px}
+.hist-pago{display:grid;gap:8px;padding:12px 14px;border:1px dashed var(--line-2);border-radius:10px}
+.hist-pago-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:10px;align-items:end}
+.hist-manuales{list-style:none;margin:0;padding:0;display:grid;gap:2px;font-size:14px}
+.hist-manuales li{display:flex;align-items:center;gap:8px}
+.hist-manuales .icon-btn{width:30px;height:30px;font-size:17px}
+.imp-lista{margin:0;padding-left:1.2em;display:grid;gap:4px;font-size:14px;color:var(--ink-2)}
+.imp-lista b{color:var(--ink)}
+@media (max-width:640px){
+  .hist-sec{padding:14px 16px 16px}
+  .hist-pago-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .hist-pago-row .btn-quiet{grid-column:1/-1}
+}
+
 /* Próximos pagos */
 .pagos{list-style:none;margin:0;padding:0;display:grid}
 .pago{display:grid;grid-template-columns:54px minmax(0,1fr) auto;gap:14px;align-items:center;padding-block:12px;border-bottom:1px solid var(--grid)}
@@ -382,7 +403,10 @@ details.amort[open] summary{margin-bottom:10px}
 .goal{display:grid;gap:10px;padding-top:14px;border-top:1px solid var(--grid)}
 .goal p{font-size:14px;color:var(--ink-2)}
 .goal b{color:var(--ink)}
-.verdict{font-size:14.5px;line-height:1.5}
+.respuesta{background:var(--accent-wash);gap:6px}
+.resp-txt{font-size:17px;line-height:1.55;color:var(--ink-2);max-width:75ch}
+.resp-txt b{color:var(--ink)}
+.resp-txt .chip{vertical-align:1px}
 .chart{position:relative;width:100%;min-height:200px}
 .chart svg{display:block;max-width:100%;height:auto;overflow:visible}
 .chart .tk{fill:var(--muted);font-family:var(--f-mono);font-size:11px}

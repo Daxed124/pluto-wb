@@ -1,6 +1,6 @@
 # Estado actual y pendientes
 
-Actualizado el 1 de octubre de 2026.
+Actualizado el 26 de octubre de 2026.
 
 ## Dónde está publicada
 
@@ -22,6 +22,7 @@ Existe además una versión anterior hecha como página de Claude (artefacto pri
 | Presupuesto, tarjetas, cartera, simulador y plan de pagos | ✅ Funciona |
 | Registro diario, meses sin intereses, fechas de pago, recordatorios y préstamos (versión personal) | ✅ Funciona |
 | Lector de estados de cuenta en PDF con texto | ✅ Funciona; probado con un estado de cuenta inventado |
+| Cotejo de estados de cuenta mes a mes (historial por tarjeta, pagos aplicados al corte anterior, pago anotado a mano) | ✅ Funciona; probado con dos estados de cuenta inventados, en orden y en desorden |
 | Lector de fotos y PDF escaneados (OCR) | ✅ Funciona; probado con imágenes inventadas y con un estado de cuenta de BBVA convertido a imágenes |
 | Guardado en el navegador | ✅ Funciona |
 | Contraseña que cifra los datos, bloqueo automático y "Ocultar montos" | ✅ Funciona |
@@ -64,4 +65,4 @@ Al terminar un pendiente, márcalo aquí y agrega una línea en [CAMBIOS.md](CAM
 | Autor de los commits | Jonathan Olvera `<198673937+Daxed124@users.noreply.github.com>` (correo privado de GitHub) |
 | Permiso de Google que usa la app | `https://www.googleapis.com/auth/drive.appdata` (clasificado por Google como no sensible) |
 | Claves internas de almacenamiento | `cuentas-claras.*` en el navegador; `cuentas-claras.json` y `cuentas-claras-personal.json` en Drive. **No cambiarlas**: los datos guardados se perderían |
-| Versión de los archivos (`?v=`) | 15. Hay que subirla en `index.html`, `personal/index.html` y `privacidad.html` cada vez que cambien `app.js` o `app.css` |
+| Versión de los archivos (`?v=`) | 18. Hay que subirla en `index.html`, `personal/index.html` y `privacidad.html` cada vez que cambien `app.js` o `app.css` |

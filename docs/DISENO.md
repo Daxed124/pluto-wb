@@ -106,6 +106,8 @@ La app sigue el tema del sistema con `prefers-color-scheme`. El código también
 | **Cartera** | Tarjetas con la proporción real de una tarjeta de plástico (1.586), chip dibujado, trama de círculos concéntricos y barra de límite usado. Se deslizan de lado. Al tocar una se abre su configuración |
 | **Etiqueta de estado (`.chip`)** | Píldora con ícono ✓, ! o ✕ y texto |
 | **Gráficas** | SVG propio, sin librería: líneas de 2 px, columnas con extremo redondeado de 4 px y retícula de 1 px. Etiquetas solo en puntos clave y descripción para lectores de pantalla |
+| **La respuesta** | Bloque con fondo del color de marca al inicio del Simulador y del Plan de pagos. Responde en una frase la pregunta de la pestaña y se actualiza al cambiar cualquier número |
+| **Historial de estados de cuenta** | Dentro de cada tarjeta (edición personal): un renglón por corte, con su etiqueta de estado, los montos y los pagos aplicados |
 | **Información flotante** | Cruz y recuadro oscuro que siguen el cursor en las gráficas, y recuadro simple en barras y segmentos |
 | **Tablas** | Con encabezado fijo, cifras alineadas a la derecha y scroll propio |
 | **Ventana de contraseña y candado** | Ventana modal con cierre con Escape y regreso del foco al botón que la abrió, y pantalla de bloqueo a pantalla completa |
@@ -179,6 +181,7 @@ Presente en el código:
 - Meses sin intereses con su proyección a 12 meses.
 - Fechas de corte y pago con aviso de vencimiento, botón "Ya pagué" y recordatorios para el calendario (archivo `.ics`).
 - Préstamos con tabla de pagos y simulación de abonos extra a capital.
+- **Estados de cuenta mes a mes:** cada uno se guarda como un corte de la tarjeta, y los pagos del mes siguiente se aplican al corte anterior para marcarlo como pagado completo, con el mínimo, incompleto o sin pago. También se puede anotar un pago a mano.
 - **Lector de estados de cuenta** en PDF o fotos, con OCR en el navegador. Quita datos sensibles y exige revisión antes de guardar. Probado con el formato de BBVA.
 
 **Datos y seguridad**

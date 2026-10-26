@@ -119,7 +119,7 @@ function ejemplo(pais){
       { id:uid(), concepto:'Salidas y streaming', cat:'Entretenimiento', frec:'mensual', monto:f(1100) },
       { id:uid(), concepto:'Ahorro de emergencia', cat:'Ahorro e inversión', frec:'quincenal', monto:f(400) }
     ],
-    tarjetas, prestamos:[], movimientos:[],
+    tarjetas, prestamos:[], movimientos:[], cortes:[], pagosTarjeta:[],
     plan:{ presupuesto:null, metodo:'avalancha' }
   };
   if (PERSONAL) {
@@ -140,7 +140,7 @@ function enBlanco(prev){
     v:2, ejemplo:false, pais:(prev && prev.pais) || 'MX', moneda:(prev && prev.moneda) || 'MXN', iva:prev ? prev.iva : 0, actualizado:null,
     ingresos:[{ id:uid(), concepto:'Sueldo', frec:'mensual', monto:0 }],
     gastos:[{ id:uid(), concepto:'', cat:'Vivienda', frec:'mensual', monto:0 }],
-    tarjetas:[nuevaTarjeta('Mi tarjeta')], prestamos:[], movimientos:[],
+    tarjetas:[nuevaTarjeta('Mi tarjeta')], prestamos:[], movimientos:[], cortes:[], pagosTarjeta:[],
     plan:{ presupuesto:null, metodo:'avalancha' }
   };
 }
@@ -148,6 +148,7 @@ function normalizar(s){
   if (!s || typeof s !== 'object') return null;
   const arr = a => Array.isArray(a) ? a.filter(x => x && typeof x === 'object') : [];
   const n = v => Number(v) || 0;
+  const nn = v => v == null || v === "" ? null : (Number(v) || 0);
   const str = v => String(v == null ? '' : v).slice(0, 200);
   const id = v => String(v || uid()).slice(0, 40);
   const dia = v => { const d = Math.round(Number(v) || 0); return d >= 1 && d <= 31 ? d : 0; };
@@ -171,6 +172,15 @@ function normalizar(s){
       diaPago:dia(p.diaPago), conIva:p.conIva !== false, pagadoHasta:esISO(p.pagadoHasta) ? p.pagadoHasta : ''
     })),
     movimientos: arr(s.movimientos).map(m => ({ id:id(m.id), fecha:esISO(m.fecha) ? m.fecha : isoDia(hoy()), monto:n(m.monto), cat:CATS.includes(m.cat) ? m.cat : 'Otros', nota:str(m.nota), metodo:typeof m.metodo === 'string' ? m.metodo.slice(0, 40) : 'efectivo', origen:m.origen === 'estado' ? 'estado' : undefined })),
+    // Un corte por estado de cuenta subido: solo cifras y fechas, nada sensible.
+    cortes: arr(s.cortes).filter(k => esISO(k.corte) && typeof k.tarjeta === 'string').map(k => ({
+      id:id(k.id), tarjeta:k.tarjeta.slice(0, 40), corte:k.corte, desde:esISO(k.desde) ? k.desde : '', limitePago:esISO(k.limitePago) ? k.limitePago : '',
+      saldoAnterior:nn(k.saldoAnterior), pagoNoInt:nn(k.pagoNoInt), pagoMin:nn(k.pagoMin), saldoTotal:nn(k.saldoTotal), cargos:n(k.cargos)
+    })),
+    // Pagos hechos a cada tarjeta: los que aparecen en los estados de cuenta y los que se anotan a mano.
+    pagosTarjeta: arr(s.pagosTarjeta).filter(p => esISO(p.fecha) && typeof p.tarjeta === 'string' && n(p.monto) > 0).map(p => ({
+      id:id(p.id), tarjeta:p.tarjeta.slice(0, 40), fecha:p.fecha, monto:n(p.monto), origen:p.origen === 'manual' ? 'manual' : 'estado'
+    })),
     plan:{ presupuesto:s.plan && s.plan.presupuesto != null ? n(s.plan.presupuesto) : null, metodo:s.plan && s.plan.metodo === 'bola' ? 'bola' : 'avalancha' }
   };
 }
@@ -626,6 +636,34 @@ function estadoTarjeta(a){
   if (a.sTu && a.sTu.meses > 36) return ['warn', 'Más de 3 años'];
   return ['good', 'Vas bien'];
 }
+/* cotejo de estados de cuenta mes a mes */
+const cortesDe = id => state.cortes.filter(k => k.tarjeta === id).sort((a, b) => a.corte.localeCompare(b.corte));
+const fechaLarga = iso => limpia(parseISO(iso).toLocaleDateString('es-MX', { day:'numeric', month:'short', year:'numeric' }));
+// Pagos que cuentan para un corte: los hechos después de su fecha de corte y hasta el corte siguiente.
+// Los bancos aplican los pagos primero a lo más antiguo, así que liquidan ese corte.
+function cotejo(k){
+  const sig = cortesDe(k.tarjeta).find(x => x.corte > k.corte) || null;
+  const pagos = state.pagosTarjeta.filter(p => p.tarjeta === k.tarjeta && p.fecha > k.corte && (!sig || p.fecha <= sig.corte))
+    .sort((a, b) => a.fecha.localeCompare(b.fecha));
+  const total = sum(pagos, p => p.monto);
+  const aTiempo = k.limitePago ? sum(pagos.filter(p => p.fecha <= k.limitePago), p => p.monto) : total;
+  const vencido = k.limitePago ? isoDia(hoy()) > k.limitePago : !!sig;
+  const meta = k.pagoNoInt, min = k.pagoMin;
+  let estado, pagado = false;
+  if (meta != null && meta <= 0.005) { estado = ['good', 'Sin saldo que pagar']; pagado = true; }
+  else if (meta != null && total + 0.5 >= meta) { estado = ['good', !k.limitePago || aTiempo + 0.5 >= meta ? 'Pagado completo' : 'Pagado completo, con retraso']; pagado = true; }
+  else if (min != null && total + 0.5 >= min) { estado = ['warn', 'Pagaste el mínimo']; pagado = true; }
+  else if (total > 0.005) estado = vencido ? ['bad', 'Pago incompleto'] : ['warn', 'Pago parcial'];
+  else if (vencido) estado = sig ? ['bad', 'Sin pago'] : ['bad', 'Sin pago registrado'];
+  else estado = ['warn', 'Por pagar'];
+  return { sig, pagos, total, vencido, estado, pagado, falta: meta != null ? Math.max(0, meta - total) : null };
+}
+// Hasta qué fecha límite está pagada la tarjeta: la marcada con "Ya pagué" o la del último corte cubierto.
+function pagadoEfectivo(c){
+  let p = c.pagadoHasta || '';
+  cortesDe(c.id).forEach(k => { if (k.limitePago && k.limitePago > p && cotejo(k).pagado) p = k.limitePago; });
+  return p;
+}
 function proximoVenc(dia, pagadoHasta){
   const h = hoy();
   for (let k = 0; k < 14; k++) {
@@ -819,8 +857,8 @@ function shellHTML(){
   ${panel('presupuesto', presupuestoHTML(), 'Anota lo que ganas y lo que planeas gastar cada mes. Si te pagan por quincena o por semana, elige la frecuencia y la app lo convierte a mensual. Los pagos de tarjetas' + (PERSONAL ? ' y préstamos' : '') + ' van aparte.')}
   ${panel('tarjetas', tarjetasHTML(), 'Copia los datos de tu estado de cuenta. Por cada tarjeta verás cuánto te cobran de intereses este mes y cuánto tardas en liquidarla si pagas solo el mínimo o si pagas lo que tú decidas.')}
   ${PERSONAL ? panel('prestamos', prestamosHTML(), 'Tus créditos de auto, personales, de nómina o hipotecarios. Ve cuánto te falta, cuándo terminas y cuánto te ahorras si abonas de más a capital.') : ''}
-  ${panel('simulador', simuladorHTML(), 'Prueba distintos pagos y mira mes a mes cuánto se va en intereses y cuánto baja tu deuda. Lo que cambies aquí no modifica tus tarjetas.')}
-  ${panel('plan', planHTML(), 'Si tienes varias tarjetas: cada mes pagas el mínimo de todas y el dinero que sobra lo mandas a una sola. Cuando la liquidas, lo que le pagabas pasa a la siguiente. Aquí comparas dos formas de elegir el orden.')}
+  ${panel('simulador', simuladorHTML(), 'Responde una pregunta: <strong>si le pago cierta cantidad al mes a una tarjeta, ¿cuánto tardo en terminar y cuánto pago de intereses?</strong> Elige una tarjeta o escribe números para probar. Lo que cambies aquí no modifica tus tarjetas.')}
+  ${panel('plan', planHTML(), 'Responde una pregunta: <strong>si tengo varias tarjetas y cierta cantidad al mes para pagarlas, ¿a cuál le pago primero?</strong> La regla es sencilla: pagas el mínimo en todas para no atrasarte, y todo lo que sobra se lo das a una sola tarjeta hasta terminarla. Luego sigues con la siguiente.')}
 </main>
 <footer class="wrap foot">
   <section class="datos" aria-labelledby="datos-t">
@@ -983,7 +1021,7 @@ function simuladorHTML(){
   <div class="sim-grid">
     <article class="block">
       <header class="block-head"><h2>Datos de la deuda</h2></header>
-      <label class="fld" for="s-fuente"><span class="fld-l">Tomar datos de</span><select class="in" id="s-fuente"></select></label>
+      <label class="fld" for="s-fuente"><span class="fld-l">Tomar datos de</span><select class="in" id="s-fuente"></select><span class="fld-h">Elige una de tus tarjetas, o "Valores propios" para probar otros números.</span></label>
       <div class="fields">
         ${n('s-saldo', 'Saldo')}${n('s-tasa', 'Tasa anual', '%')}${n('s-pago', 'Tu pago mensual')}${n('s-iva', 'Impuesto s/ intereses', '%')}
         <fieldset class="fld-set">
@@ -1002,15 +1040,20 @@ function simuladorHTML(){
       </div>
     </article>
     <div class="sim-results">
+      <article class="block respuesta" aria-live="polite">
+        <p class="label">La respuesta</p>
+        <p class="resp-txt" id="s-respuesta"></p>
+      </article>
       <article class="block">
         <header class="block-head"><h2>Pago mínimo contra tu pago</h2></header>
+        <p class="fld-h">La columna naranja es lo que pasa si pagas solo el mínimo que pide el banco; la azul, si pagas lo que tú escribiste.</p>
         <div class="table-wrap"><table class="tbl" id="s-cmp"></table></div>
-        <div class="verdict" id="s-verdict"></div>
       </article>
       <article class="block">
         <header class="block-head"><h2>Saldo pendiente mes a mes</h2>
           <ul class="legend"><li><span class="lkey" style="background:var(--s1)"></span>Tu pago</li><li><span class="lkey" style="background:var(--s2)"></span>Solo el mínimo</li></ul>
         </header>
+        <p class="fld-h">Cada línea es lo que todavía debes, mes a mes. Mientras más rápido llega a cero, menos intereses pagas. Pasa el cursor o el dedo por la gráfica para ver cada mes.</p>
         <div class="chart" id="s-chart"></div>
         <p class="chart-note" id="s-chart-note" hidden></p>
       </article>
@@ -1018,6 +1061,7 @@ function simuladorHTML(){
         <header class="block-head"><h2>Tabla de pagos</h2>
           <div class="seg" role="group" aria-label="Qué tabla ver"><button type="button" data-tabla="tu" aria-pressed="true">Con tu pago</button><button type="button" data-tabla="min" aria-pressed="false">Solo el mínimo</button></div>
         </header>
+        <p class="fld-h">Mes por mes: lo que pagas, cuánto se queda el banco como interés, y cuánto baja de verdad tu deuda (columna "A tu deuda").</p>
         <div class="table-wrap scroll-y"><table class="tbl" id="s-table"></table></div>
       </article>
     </div>
@@ -1032,19 +1076,23 @@ function planHTML(){
       <button class="btn-quiet" id="pl-auto" type="button" hidden>Usar la suma de mis pagos</button>
     </div>
     <p class="fld-h" id="pl-hint"></p>
+    <p class="fld-h">Escribe lo que puedes pagar a todas tus tarjetas juntas. Tiene que ser por lo menos la suma de los mínimos.</p>
   </article>
   <p class="empty" id="pl-empty" hidden>Escribe el saldo de al menos una tarjeta en la pestaña Tarjetas para armar tu plan.</p>
   <div class="stack-y" id="pl-body">
     <p class="alert" id="pl-warn" hidden></p>
+    <article class="block respuesta" aria-live="polite"><p class="label">La respuesta</p><p class="resp-txt" id="pl-respuesta"></p></article>
+    <p class="fld-h">Hay dos formas de elegir el orden. Aquí las comparamos con tus tarjetas:</p>
     <div class="grid-2" id="pl-methods"></div>
     <p class="base-line" id="pl-base"></p>
     <article class="block">
       <header class="block-head"><h2>Deuda total mes a mes</h2>
         <ul class="legend"><li><span class="lkey" style="background:var(--s1)"></span>Avalancha</li><li><span class="lkey" style="background:var(--s2)"></span>Bola de nieve</li></ul>
       </header>
+      <p class="fld-h">Lo que debes en total, sumando todas tus tarjetas, mes a mes con cada forma. La línea llega a cero el mes en que quedas libre de tarjetas.</p>
       <div class="chart" id="pl-chart"></div>
     </article>
-    <article class="block"><header class="block-head"><h2 id="pl-orden-t">Orden de pago</h2></header><ol class="orden" id="pl-orden"></ol></article>
+    <article class="block"><header class="block-head"><h2 id="pl-orden-t">Orden de pago</h2></header><p class="fld-h">Una por una, en este orden. El sello "Pagada" marca el mes en que terminas cada tarjeta.</p><ol class="orden" id="pl-orden"></ol></article>
   </div>`;
 }
 
@@ -1139,6 +1187,7 @@ function renderTarjetasEd(){
       <div class="aviso" id="out-${esc(c.id)}"></div>
     </div>
     ${PERSONAL ? msiHTML(c) : ''}
+    ${PERSONAL ? `<div class="hist-sec" id="hist-${esc(c.id)}"></div>` : ''}
   </article>`).join('');
 }
 function renderPrestamosEd(){
@@ -1266,6 +1315,61 @@ function renderPrestamosOut(AP){
   });
 }
 
+/* historial de estados de cuenta de una tarjeta, con el cotejo de pagos */
+function renderHistorial(c){
+  const el = byId('hist-' + c.id); if (!el) return;
+  if (el.contains(document.activeElement)) return; // no borrar lo que la persona está escribiendo
+  const cs = cortesDe(c.id).reverse();
+  const manuales = state.pagosTarjeta.filter(p => p.tarjeta === c.id && p.origen === 'manual').sort((a, b) => b.fecha.localeCompare(a.fecha));
+  let h = `<div class="msi-head"><p class="fld-l">Historial de estados de cuenta</p>${cs.length ? `<p class="fld-h">${plural(cs.length, 'estado de cuenta', 'estados de cuenta')}</p>` : ''}</div>`;
+  if (!cs.length) h += '<p class="fld-h">Todavía no subes estados de cuenta de esta tarjeta. Súbelos en Registro diario → Subir estado de cuenta, empezando por el más antiguo. Aquí verás, mes a mes, cuánto debías y si lo pagaste.</p>';
+  else h += '<ol class="hist">' + cs.map(k => {
+    const r = cotejo(k);
+    const filas = [
+      k.pagoNoInt != null && ['Para no generar intereses', m2(k.pagoNoInt)],
+      k.pagoMin != null && ['Pago mínimo', m2(k.pagoMin)],
+      k.limitePago && ['Fecha límite de pago', fechaCorta(parseISO(k.limitePago))],
+      k.cargos > 0 && ['Compras y cargos del periodo', m2(k.cargos)],
+      ['Pagaste para este corte', r.pagos.length || r.vencido || r.sig ? m2(r.total) : 'Todavía nada']
+    ].filter(Boolean);
+    const detalle = r.pagos.length ? `<p class="fld-h">${r.pagos.map(p => esc(m2(p.monto)) + ' el ' + esc(fechaCorta(parseISO(p.fecha))) + (p.origen === 'manual' ? ' (anotado a mano)' : '')).join(' · ')}</p>` : '';
+    let nota = '';
+    if (!r.pagado && r.vencido && !r.sig && !r.pagos.length) nota = '<p class="note-line">Ya pasó la fecha límite y no tenemos registrado ningún pago. Si ya pagaste, sube el estado de cuenta siguiente o anota tu pago abajo.</p>';
+    else if (!r.pagado && r.falta > 0.5 && (r.pagos.length || r.vencido)) nota = `<p class="note-line">Te faltaron <b>${esc(m2(r.falta))}</b> para no generar intereses${r.vencido ? '. El banco cobra intereses sobre lo que quedó pendiente' : ''}.</p>`;
+    else if (!r.sig && !r.vencido && !r.pagado) nota = '<p class="fld-h">Cuando subas el estado de cuenta del mes siguiente, aquí aparecerá si lo pagaste. También puedes anotar tu pago abajo.</p>';
+    return `<li class="hist-i">
+      <div class="hist-top"><p class="o-name">Corte del ${esc(fechaLarga(k.corte))}</p>${chip(r.estado[0], r.estado[1])}</div>
+      ${k.desde ? `<p class="fld-h">Periodo del ${esc(fechaCorta(parseISO(k.desde)))} al ${esc(fechaCorta(parseISO(k.corte)))}</p>` : ''}
+      <dl class="kv hist-kv">${filas.map(([l, v]) => `<div><dt>${esc(l)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
+      ${detalle}${nota}
+      <button class="link link-sm" type="button" data-delcorte="${esc(k.id)}">Quitar del historial</button>
+    </li>`;
+  }).join('') + '</ol>';
+  h += `<div class="hist-pago">
+    <p class="fld-l">¿Ya pagaste y todavía no tienes el siguiente estado de cuenta?</p>
+    <div class="hist-pago-row">
+      <label class="fld" for="pm-monto-${esc(c.id)}"><span class="fld-h">Monto que pagaste</span><input class="in num" id="pm-monto-${esc(c.id)}" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0"></label>
+      <label class="fld" for="pm-fecha-${esc(c.id)}"><span class="fld-h">Fecha</span><input class="in" id="pm-fecha-${esc(c.id)}" type="date" value="${isoDia(hoy())}"></label>
+      <button class="btn-quiet" type="button" data-anotarpago="${esc(c.id)}">Anotar pago</button>
+    </div>
+    ${manuales.length ? `<ul class="hist-manuales">${manuales.map(p => `<li>${esc(m2(p.monto))} el ${esc(fechaLarga(p.fecha))} <span class="muted">(anotado a mano)</span><button class="icon-btn" type="button" data-delpago="${esc(p.id)}" aria-label="Quitar el pago de ${esc(m2(p.monto))}">×</button></li>`).join('')}</ul>` : ''}
+    <p class="fld-h">Cuando subas el estado de cuenta donde aparece ese pago, lo reemplaza para no contarlo dos veces.</p>
+  </div>`;
+  el.innerHTML = h;
+}
+function anotarPago(id){
+  const monto = Math.round((Number(byId('pm-monto-' + id).value) || 0) * 100) / 100, f = byId('pm-fecha-' + id).value;
+  if (!(monto > 0)) { toast('Escribe cuánto pagaste.'); byId('pm-monto-' + id).focus(); return; }
+  if (!esISO(f)) { toast('Elige la fecha del pago.'); return; }
+  state.pagosTarjeta.push({ id:uid(), tarjeta:id, fecha:f, monto, origen:'manual' });
+  const k = cortesDe(id).filter(x => x.corte < f).pop();
+  byId('pm-monto-' + id).value = '';
+  document.activeElement.blur();
+  renderOutputs(); cambiado();
+  const r = k ? cotejo(k) : null;
+  toast(`Anotamos tu pago de ${m2(monto)}.` + (r ? ` El estado de cuenta del ${fechaCorta(parseISO(k.corte))} quedó: ${r.estado[1].toLowerCase()}.` : ''));
+}
+
 /* cartera: las tarjetas como en una billetera, más el total de la deuda entre todas */
 function renderCartera(A){
   const tot = byId('cartera-total'); if (!tot) return;
@@ -1294,7 +1398,7 @@ function renderCartera(A){
   byId('wallet').innerHTML = cs.map(c => {
     const a = A.get(c.id), d = deuda(c), u = num(c.limite) > 0 ? (a.b + a.msiPend) / num(c.limite) : null;
     let pie;
-    if (PERSONAL && c.diaPago && d > 0) pie = 'Paga el ' + fechaCorta(proximoVenc(c.diaPago, c.pagadoHasta));
+    if (PERSONAL && c.diaPago && d > 0) pie = 'Paga el ' + fechaCorta(proximoVenc(c.diaPago, pagadoEfectivo(c)));
     else if (u != null) pie = 'Usas ' + pct(u);
     else pie = num(c.tasa) ? tasaTxt(c.tasa) + ' anual' : '';
     const e = estadoTarjeta(a);
@@ -1443,7 +1547,7 @@ function renderPagos(A){
     if (!c.diaPago) return;
     const a = A.get(c.id); if (a.b <= 0 && !a.msi) return;
     const corte = c.diaCorte ? proximoVenc(c.diaCorte, '') : null;
-    items.push({ tipo:'tarjeta', id:c.id, nombre:nombreTarjeta(c, 'Tarjeta'), f:proximoVenc(c.diaPago, c.pagadoHasta), ph:c.pagadoHasta,
+    items.push({ tipo:'tarjeta', id:c.id, nombre:nombreTarjeta(c, 'Tarjeta'), f:proximoVenc(c.diaPago, pagadoEfectivo(c)), ph:c.pagadoHasta,
       meta:`Para no generar intereses: ${m0(a.b + a.msi)} · Mínimo: ${m0(a.min + a.msi)}` + (corte ? ` · Próximo corte: ${fechaCorta(corte)}` : '') });
   });
   state.prestamos.forEach(p => {
@@ -1559,18 +1663,18 @@ function renderSim(){
     <tr><td>Total que pagas</td><td class="n">${esc(sMin.nunca ? '—' : m2(sMin.tp))}</td><td class="n">${esc(cell(sTu, s => s.nunca ? '—' : m2(s.tp)))}</td></tr>
     <tr><td>Terminas en</td><td class="n">${esc(fin(sMin))}</td><td class="n">${esc(cell(sTu, fin))}</td></tr></tbody>`;
 
-  const v = byId('s-verdict');
+  const v = byId('s-respuesta');
   const minHoy = sMin.rows[0] ? sMin.rows[0].p : 0;
-  if (!num(sim.saldo)) v.innerHTML = '<p class="muted">Escribe un saldo para simular.</p>';
-  else if (!sTu) v.innerHTML = '<p class="muted">Escribe tu pago mensual para compararlo con el mínimo.</p>';
-  else if (sTu.nunca) v.innerHTML = `${chip('bad', 'La deuda crece')} <span>Con ${esc(m2(sim.pago))} al mes no cubres ni los intereses (${esc(m2(sTu.rows[0].i + sTu.rows[0].iv))}). Necesitas pagar más.</span>`;
-  else if (sim.pago + 0.005 < minHoy) v.innerHTML = `${chip('bad', 'Menor al mínimo')} <span>Tu pago es menor que el mínimo de ${esc(m2(minHoy))}. El banco te cobraría comisión por pago tardío.</span>`;
-  else if (sMin.nunca || sMin.tope) v.innerHTML = `${chip('good', 'Buen pago')} <span>Pagando solo el mínimo tardarías más de 50 años. Con ${esc(m2(sim.pago))} al mes terminas en ${esc(dur(sTu.meses))}.</span>`;
+  const soloMin = sMin.nunca ? 'Pagando solo el mínimo, la deuda nunca se acabaría.' : sMin.tope ? 'Pagando solo el mínimo, tardarías más de 50 años.' : `Pagando solo el mínimo, tardarías ${esc(dur(sMin.meses))} y pagarías ${esc(m0(sMin.ti + sMin.tv))} de intereses.`;
+  if (!num(sim.saldo)) v.innerHTML = 'Escribe el saldo de la tarjeta (o elige una de tus tarjetas arriba) para empezar.';
+  else if (!sTu) v.innerHTML = `${soloMin} Escribe cuánto piensas pagar al mes para comparar.`;
+  else if (sTu.nunca) v.innerHTML = `${chip('bad', 'La deuda crece')} Con <b>${esc(m2(sim.pago))} al mes</b> la deuda nunca se acaba: no alcanza ni para los intereses de ${esc(m2(sTu.rows[0].i + sTu.rows[0].iv))}. Prueba con una cantidad mayor.`;
+  else if (sim.pago + 0.005 < minHoy) v.innerHTML = `${chip('bad', 'Menor al mínimo')} Con <b>${esc(m2(sim.pago))} al mes</b> pagarías menos que el mínimo de ${esc(m2(minHoy))}, y el banco te cobraría una comisión por pago tardío. Paga por lo menos el mínimo.`;
+  else if (sMin.nunca || sMin.tope) v.innerHTML = `Pagando <b>${esc(m0(sim.pago))} al mes</b> terminas en <b>${esc(fecha(sTu.meses))}</b> (${esc(dur(sTu.meses))}) y pagas <b>${esc(m0(sTu.ti + sTu.tv))} de intereses</b>. ${soloMin}`;
   else {
     const ah = (sMin.ti + sMin.tv) - (sTu.ti + sTu.tv);
-    v.innerHTML = ah > 1
-      ? `${chip('good', 'Te ahorras ' + m0(ah))} <span>de intereses y terminas ${esc(dur(sMin.meses - sTu.meses))} antes que pagando solo el mínimo.</span>`
-      : '<span>Tu pago es casi igual al mínimo.</span>';
+    v.innerHTML = `Pagando <b>${esc(m0(sim.pago))} al mes</b> terminas en <b>${esc(fecha(sTu.meses))}</b> (${esc(dur(sTu.meses))}) y pagas <b>${esc(m0(sTu.ti + sTu.tv))} de intereses</b>. ${soloMin}` +
+      (ah > 1 ? ` ${chip('good', 'Te ahorras ' + m0(ah))}` : ' Tu pago es casi igual al mínimo.');
   }
 
   const d0 = num(sim.saldo), serie = s => [d0].concat(s.rows.map(r => r.b));
@@ -1639,8 +1743,8 @@ function renderPlan(A){
     </article>`;
   };
   byId('pl-methods').innerHTML =
-    tarjeta('avalancha', 'Avalancha', 'Primero la tarjeta con la <b>tasa más alta</b>. Es la forma de pagar menos intereses en total.', av, bn) +
-    tarjeta('bola', 'Bola de nieve', 'Primero la tarjeta con el <b>saldo más pequeño</b>. Liquidas tarjetas más rápido y eso ayuda a no rendirse.', bn, av);
+    tarjeta('avalancha', 'Avalancha', 'Primero la tarjeta que cobra la <b>tasa de interés más alta</b>. Casi siempre es la forma de pagar menos intereses en total.', av, bn) +
+    tarjeta('bola', 'Bola de nieve', 'Primero la tarjeta con <b>la deuda más pequeña</b>. Terminas una tarjeta pronto y eso ayuda a seguir, aunque puedes pagar un poco más de intereses.', bn, av);
 
   const mins = cards.map(c => A.get(c.id).sMin);
   const baseNunca = mins.some(s => s.nunca || s.tope);
@@ -1652,6 +1756,11 @@ function renderPlan(A){
   if (mejor && !baseNunca && baseInt - mejor.ti > 1) base += ` Con este plan te ahorras <b>${esc(m0(baseInt - mejor.ti))}</b>.`;
   if (Number.isFinite(av.meses) && Number.isFinite(bn.meses) && Math.abs(av.ti - bn.ti) <= 0.5) base += ' Con tus tarjetas, los dos métodos dan casi el mismo resultado.';
   byId('pl-base').innerHTML = base;
+  const elegido = state.plan.metodo === 'bola' ? bn : av, nomMetodo = state.plan.metodo === 'bola' ? 'bola de nieve' : 'avalancha';
+  const primera = elegido.orden[0] && state.tarjetas.find(t => t.id === elegido.orden[0].id);
+  byId('pl-respuesta').innerHTML = !Number.isFinite(elegido.meses)
+    ? `Con ${esc(m0(pres))} al mes no alcanzas a terminar de pagar tus tarjetas: los intereses se comen casi todo. Prueba con una cantidad mayor.`
+    : `Paga el mínimo en todas tus tarjetas y lo que sobre mándalo a <b>${esc(primera ? nombreTarjeta(primera) : 'la primera de la lista')}</b>. Así, con <b>${esc(m0(pres))} al mes</b>, quedas libre de tarjetas en <b>${esc(fecha(elegido.meses))}</b> (${esc(dur(elegido.meses))}) y pagas <b>${esc(m0(elegido.ti))} de intereses</b>. Estás viendo el método ${nomMetodo}; abajo puedes compararlo con el otro.`;
 
   lineChart(byId('pl-chart'), [{ name:'Avalancha', v:'--s1', data:av.serie }, { name:'Bola de nieve', v:'--s2', data:bn.serie }],
     { aria:'Deuda total mes a mes con los métodos avalancha y bola de nieve', after:() => 'Sin deudas' });
@@ -1969,7 +2078,16 @@ function resumenEstado(texto){
     }
     return null;
   };
+  // "Periodo: 22-ago-2026 al 21-sep-2026": fecha de inicio y de fin del periodo.
+  const periodo = (() => {
+    const w = ventana(/periodo[\s:]*(?:del?\s+)?(?=\d{1,2}[\s\-\/.])/i); if (!w) return [];
+    const re = new RegExp(RE_FECHA_EN.source, 'gi'), out = []; let a;
+    while ((a = re.exec(w)) && out.length < 2) { const f = fechaDe(a[1], a[2], a[3], hoy()); if (f) out.push(f); }
+    return out;
+  })();
   return {
+    desde: periodo.length === 2 ? periodo[0] : null,
+    saldoAnterior: monto(/(?:saldo|adeudo)\s+(?:del\s+periodo\s+)?anterior/i),
     pagoNoInt: monto(/pago\s+para\s+no\s+generar\s+intereses/i),
     pagoMin: monto(/pago\s+m[ií]nimo/i),
     saldo: monto(/saldo\s+(?:deudor\s+)?(?:total|al\s+corte|nuevo|actual)/i),
@@ -2004,7 +2122,9 @@ function lineaMovimiento(ln, ref){
   const nota = limpiarDesc(desc);
   if (nota.replace(/[^\p{L}]/gu, '').length < 2 || !(montos[0].v > 0)) return null;
   const abono = montos[0].neg || RE_ABONO.test(up);
-  return { fecha:isoDia(f), desc:nota, monto:montos[0].v, abono, cat:abono ? 'Otros' : catDe(up) };
+  // Un abono es "pago" si no es devolución, bonificación o reembolso: solo los pagos liquidan el corte anterior.
+  const pago = abono && !/DEVOLUC|BONIFIC|REEMBOLS|CASHBACK|REVERSO|CANCELAC/.test(up);
+  return { fecha:isoDia(f), desc:nota, monto:montos[0].v, abono, pago, cat:abono ? 'Otros' : catDe(up) };
 }
 function analizarEstado(lineas, cuenta){
   const res = resumenEstado(lineas.join('\n'));
@@ -2045,7 +2165,19 @@ function analizarEstado(lineas, cuenta){
   if (res.pagoMin != null) info.push('pago mínimo ' + m2(res.pagoMin));
   if (res.pagoNoInt != null) info.push('pago para no generar intereses ' + m2(res.pagoNoInt));
   if (res.limitePago) info.push('fecha límite ' + fechaCorta(res.limitePago));
-  return { cuenta, movs, msi:msiNuevas, cambios, info:info.length ? 'Tu estado de cuenta dice: ' + info.join(' · ') + '.' : '' };
+  // El estado de cuenta se guarda como un corte de la tarjeta, para cotejarlo con los de otros meses.
+  // Si ya hay uno más reciente de esa tarjeta, no se tocan los datos de la tarjeta.
+  let corte = null, reciente = true;
+  if (c && res.corte) {
+    const iso = isoDia(res.corte);
+    reciente = !state.cortes.some(k => k.tarjeta === c.id && k.corte > iso);
+    corte = {
+      tarjeta:c.id, corte:iso, desde:res.desde ? isoDia(res.desde) : '', limitePago:res.limitePago ? isoDia(res.limitePago) : '',
+      saldoAnterior:res.saldoAnterior, pagoNoInt:res.pagoNoInt, pagoMin:res.pagoMin, saldoTotal:res.saldo,
+      yaExistia:state.cortes.some(k => k.tarjeta === c.id && k.corte === iso)
+    };
+  }
+  return { cuenta, movs, msi:msiNuevas, cambios:reciente ? cambios : [], corte, reciente, info:info.length ? 'Tu estado de cuenta dice: ' + info.join(' · ') + '.' : '' };
 }
 const esPDF = f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
 const esImagen = f => /^image\//.test(f.type) || /\.(jpe?g|png|webp|bmp|gif|heic|heif)$/i.test(f.name);
@@ -2092,7 +2224,7 @@ async function procesarArchivos(lista){
   if (!lineas.length) { est.textContent = 'No encontramos texto. Si es una foto, tómala de frente, con buena luz y sin sombras.'; return; }
   const r = analizarEstado(lineas, cuenta);
   lineas.length = 0; lineas = null;
-  if (!r.movs.length && !r.msi.length && !r.cambios.length) {
+  if (!r.movs.length && !r.msi.length && !r.cambios.length && !r.corte) {
     est.textContent = ocr
       ? `Leímos ${plural2 ? 'las imágenes' : 'la imagen'}, pero no reconocimos movimientos. Prueba con una foto más nítida, de frente y con buena luz, o anótalos a mano. Ya ${plural2 ? 'se descartaron' : 'se descartó'}.`
       : 'Leímos el archivo, pero no encontramos movimientos. Puede que tu banco use un formato que la app todavía no reconoce. El archivo ya se descartó.';
@@ -2107,15 +2239,22 @@ function renderRevision(){
   if (!imp) { el.hidden = true; el.innerHTML = ''; return; }
   el.hidden = false;
   const c = state.tarjetas.find(t => t.id === imp.cuenta);
-  const g = imp.movs.filter(m => !m.abono), ab = imp.movs.filter(m => m.abono), dups = imp.movs.filter(m => m.dup);
+  const g = imp.movs.filter(m => !m.abono), ab = imp.movs.filter(m => m.abono), pagos = ab.filter(m => m.pago), dups = imp.movs.filter(m => m.dup);
   let h = '';
-  if (imp.movs.length) h += `<p class="note-line">Encontramos <b>${plural(imp.movs.length, 'movimiento', 'movimientos')}</b>: ${plural(g.length, 'cargo', 'cargos')} por <b>${esc(m0(sum(g, m => m.monto)))}</b>` +
-    (ab.length ? ` y ${plural(ab.length, 'pago o abono', 'pagos o abonos')} que dejamos sin marcar` : '') +
+  if (imp.movs.length) h += `<p class="note-line">Encontramos <b>${plural(g.length, 'cargo', 'cargos')}</b> por <b>${esc(m0(sum(g, m => m.monto)))}</b>` +
+    (ab.length ? ` y ${plural(ab.length, 'pago o abono', 'pagos o abonos')} a la tarjeta, que no son gastos` : '') +
     (dups.length ? `. ${dups.length === 1 ? 'Uno ya estaba' : dups.length + ' ya estaban'} en tu registro` : '') + '. Desmarca lo que no quieras agregar.</p>';
   if (imp.info) h += `<p class="fld-h">${esc(imp.info)}</p>`;
   if (imp.ocr) h += `<p class="note-line">${chip('warn', 'Leído de una imagen')} Revisa las fechas y los montos antes de agregar: el reconocimiento de texto a veces confunde números, como un 8 con un 3.</p>`;
-  if (c && imp.cambios.length) h += `<fieldset class="imp-sec"><legend class="fld-l">Actualizar ${esc(c.nombre || 'tu tarjeta')}</legend>` +
-    imp.cambios.map((x, i) => `<label class="check"><input type="checkbox" data-impc="${i}"${x.on ? ' checked' : ''}><span>${esc(x.label)}: <b>${esc(x.txt)}</b> <span class="muted">(ahora ${esc(x.antes)})</span></span></label>`).join('') + '</fieldset>';
+  if (c && imp.corte) {
+    const k = imp.corte;
+    h += `<div class="imp-sec"><p class="fld-l">Estado de cuenta con corte del ${esc(fechaLarga(k.corte))}${k.desde ? ` (periodo del ${esc(fechaCorta(parseISO(k.desde)))} al ${esc(fechaCorta(parseISO(k.corte)))})` : ''}</p>
+      <p class="note-line">Se guardará en el historial de ${esc(nombreTarjeta(c))}.${k.yaExistia ? ' Ya lo habías subido antes: lo reemplazamos.' : ''}</p>` +
+      (pagos.length ? `<p class="note-line">Pagos a la tarjeta en este periodo: <b>${plural(pagos.length, 'pago', 'pagos')} por ${esc(m0(sum(pagos, m => m.monto)))}</b>. Con ellos revisamos si pagaste el estado de cuenta anterior.</p>` : '') +
+      (imp.reciente ? '' : `<p class="note-line">${chip('warn', 'Estado de cuenta anterior')} Ya subiste uno más reciente de esta tarjeta, así que no cambiamos sus datos actuales.</p>`) + '</div>';
+  } else if (c) h += `<p class="note-line">${chip('warn', 'Sin fecha de corte')} No encontramos la fecha de corte, así que este estado de cuenta no se puede guardar en el historial. Los gastos sí se pueden agregar.</p>`;
+  if (c && imp.cambios.length) h += `<div class="imp-sec"><p class="fld-l">Al agregar, actualizamos ${esc(nombreTarjeta(c))} con estos datos</p><ul class="imp-lista">` +
+    imp.cambios.map(x => `<li>${esc(x.label)}: <b>${esc(x.txt)}</b> <span class="muted">(antes ${esc(x.antes)})</span></li>`).join('') + '</ul></div>';
   if (c && imp.msi.length) h += `<fieldset class="imp-sec"><legend class="fld-l">Compras a meses sin intereses</legend>` +
     imp.msi.map((p, i) => `<label class="check"><input type="checkbox" data-impmsi="${i}"${p.on ? ' checked' : ''}><span>${esc(p.desc || 'Compra a meses')} · ${esc(m0(p.monto))} a ${p.meses} meses <span class="muted">(vas en el pago ${p.k} de ${p.meses})</span></span></label>`).join('') + '</fieldset>';
   if (imp.movs.length) h += `<div class="table-wrap scroll-y"><table class="tbl imp-tbl"><thead><tr>
@@ -2123,7 +2262,7 @@ function renderRevision(){
     imp.movs.map((m, i) => `<tr class="${m.on ? '' : 'off'}">
       <td><input type="checkbox" data-impm="${i}"${m.on ? ' checked' : ''} aria-label="Agregar ${esc(m.desc)}"></td>
       <td><input class="in in-sm" type="date" data-impf="${i}" value="${esc(m.fecha)}" aria-label="Fecha"></td>
-      <td><input class="in in-sm" data-impd="${i}" value="${esc(m.desc)}" maxlength="60" aria-label="Comercio">${m.abono ? '<span class="tag">Pago o abono</span>' : ''}${m.dup ? '<span class="tag">Ya estaba anotado</span>' : ''}</td>
+      <td><input class="in in-sm" data-impd="${i}" value="${esc(m.desc)}" maxlength="60" aria-label="Comercio">${m.abono ? `<span class="tag">${m.pago ? 'Pago a la tarjeta' : 'Devolución o abono'}</span>` : ''}${m.dup ? '<span class="tag">Ya estaba anotado</span>' : ''}</td>
       <td><select class="in in-sm" data-impcat="${i}" aria-label="Categoría">${catOpts(m.cat)}</select></td>
       <td class="n"><input class="in in-sm num" type="number" inputmode="decimal" min="0" step="0.01" data-impmonto="${i}" value="${m.monto}" aria-label="Monto"></td></tr>`).join('') + '</tbody></table></div>';
   h += '<div class="imp-acc"><button class="btn" type="button" id="imp-ok"></button><button class="btn-quiet" type="button" id="imp-no">Descartar todo</button></div>';
@@ -2132,8 +2271,8 @@ function renderRevision(){
 }
 function botonImp(){
   const b = byId('imp-ok'); if (!b || !imp) return;
-  const sel = imp.movs.filter(m => m.on && m.monto > 0), extra = imp.cambios.some(x => x.on) || imp.msi.some(p => p.on);
-  b.textContent = sel.length ? `Agregar ${plural(sel.length, 'gasto', 'gastos')} (${m0(sum(sel, m => m.monto))})` : extra ? 'Actualizar mi tarjeta' : 'Nada marcado';
+  const sel = imp.movs.filter(m => m.on && m.monto > 0), extra = !!imp.corte || imp.cambios.length > 0 || imp.msi.some(p => p.on);
+  b.textContent = sel.length ? `Agregar ${plural(sel.length, 'gasto', 'gastos')} (${m0(sum(sel, m => m.monto))})` : imp.corte ? 'Guardar estado de cuenta' : extra ? 'Actualizar mi tarjeta' : 'Nada marcado';
   b.disabled = !sel.length && !extra;
 }
 function confirmarImp(){
@@ -2141,14 +2280,33 @@ function confirmarImp(){
   const sel = imp.movs.filter(m => m.on && m.monto > 0);
   sel.forEach(m => state.movimientos.push({ id:uid(), fecha:m.fecha, monto:m.monto, cat:m.cat, nota:limpiarDesc(m.desc), metodo:imp.cuenta, origen:'estado' }));
   const c = state.tarjetas.find(t => t.id === imp.cuenta);
-  let nMsi = 0, nCamb = 0;
+  let nMsi = 0, nCamb = 0, resultado = '';
   if (c) {
     imp.msi.filter(p => p.on).forEach(p => { c.msi.push({ id:uid(), desc:p.desc, monto:p.monto, meses:p.meses, inicio:p.inicio }); nMsi++; });
-    imp.cambios.filter(x => x.on).forEach(x => {
+    // Los datos de la tarjeta se actualizan solos, solo si este es el estado de cuenta más reciente.
+    imp.cambios.forEach(x => {
       c[x.k] = x.k === 'saldo' ? Math.max(0, Math.round((x.base - msiMes(c)) * 100) / 100) : x.v;
       if (x.k === 'diaPago') c.pagadoHasta = '';
       nCamb++;
     });
+    // Pagos a la tarjeta de este periodo. Si uno coincide con un pago anotado a mano (mismo monto,
+    // 3 días de diferencia o menos), el del estado de cuenta lo reemplaza para no contarlo doble.
+    imp.movs.filter(m => m.pago && m.monto > 0).forEach(m => {
+      if (state.pagosTarjeta.some(p => p.tarjeta === c.id && p.origen === 'estado' && p.fecha === m.fecha && Math.abs(p.monto - m.monto) < 0.005)) return;
+      const dias = p => Math.abs(parseISO(p.fecha) - parseISO(m.fecha)) / 86400000;
+      state.pagosTarjeta = state.pagosTarjeta.filter(p => !(p.tarjeta === c.id && p.origen === 'manual' && Math.abs(p.monto - m.monto) < 0.005 && dias(p) <= 3));
+      state.pagosTarjeta.push({ id:uid(), tarjeta:c.id, fecha:m.fecha, monto:m.monto, origen:'estado' });
+    });
+    if (imp.corte) {
+      const k = imp.corte, cargos = Math.round(sum(imp.movs.filter(m => !m.abono), m => m.monto) * 100) / 100;
+      state.cortes = state.cortes.filter(x => !(x.tarjeta === k.tarjeta && x.corte === k.corte));
+      state.cortes.push({ id:uid(), tarjeta:k.tarjeta, corte:k.corte, desde:k.desde, limitePago:k.limitePago, saldoAnterior:k.saldoAnterior, pagoNoInt:k.pagoNoInt, pagoMin:k.pagoMin, saldoTotal:k.saldoTotal, cargos });
+      const ant = cortesDe(c.id).filter(x => x.corte < k.corte).pop();
+      if (ant) {
+        const r = cotejo(ant);
+        resultado = ` El estado de cuenta del ${fechaCorta(parseISO(ant.corte))} quedó: ${r.estado[1].toLowerCase()}${!r.pagado && r.falta > 0.5 ? ` (faltaron ${m2(r.falta)})` : ''}.`;
+      }
+    }
   }
   if (sel.length) diarioMes = sel.map(m => m.fecha.slice(0, 7)).sort().pop();
   imp = null; renderRevision();
@@ -2157,7 +2315,7 @@ function confirmarImp(){
   const partes = [];
   if (sel.length) partes.push(plural(sel.length, 'gasto', 'gastos'));
   if (nMsi) partes.push(plural(nMsi, 'compra a meses', 'compras a meses'));
-  toast((partes.length ? 'Agregamos ' + partes.join(' y ') : 'Listo') + (nCamb ? '. Actualizamos los datos de tu tarjeta' : '') + '. El PDF no se guardó.');
+  toast((partes.length ? 'Agregamos ' + partes.join(' y ') : 'Guardamos tu estado de cuenta') + (nCamb ? '. Actualizamos los datos de tu tarjeta' : '') + '.' + resultado + ' El PDF no se guardó.');
 }
 
 // Para ajustar el lector a nuevos formatos de banco: abre la página con ?depurar y usa window.CC_DEPURAR en la consola.
@@ -2179,6 +2337,7 @@ function renderTab(t){
   else if (t === 'tarjetas') {
     state.tarjetas.forEach(c => { const el = byId('out-' + c.id); if (el) el.innerHTML = avisoHTML(c, A.get(c.id)); });
     renderCartera(A);
+    if (PERSONAL) state.tarjetas.forEach(renderHistorial);
     if (PERSONAL) renderMsi();
   }
   else if (t === 'prestamos') renderPrestamosOut(analisisPrestamos());
@@ -2222,13 +2381,12 @@ function impInput(el){
   else if ('impcat' in d) { const m = imp.movs[+d.impcat]; if (m) m.cat = el.value; }
   else if ('impf' in d) { const m = imp.movs[+d.impf]; if (m && esISO(el.value)) m.fecha = el.value; }
   else if ('impmonto' in d) { const m = imp.movs[+d.impmonto]; if (m) m.monto = Math.max(0, Math.round((Number(el.value) || 0) * 100) / 100); }
-  else if ('impc' in d) { const x = imp.cambios[+d.impc]; if (x) x.on = el.checked; }
   else if ('impmsi' in d) { const p = imp.msi[+d.impmsi]; if (p) p.on = el.checked; }
   botonImp();
 }
 document.addEventListener('input', e => {
   const el = e.target;
-  if (el.id === 'imp-todos' || (el.dataset && ['impm', 'impd', 'impcat', 'impc', 'impmsi', 'impf', 'impmonto'].some(k => k in el.dataset))) { impInput(el); return; }
+  if (el.id === 'imp-todos' || (el.dataset && ['impm', 'impd', 'impcat', 'impmsi', 'impf', 'impmonto'].some(k => k in el.dataset))) { impInput(el); return; }
   if (el.dataset && el.dataset.col) {
     const it = itemDe(el); if (!it) return;
     const k = el.dataset.k;
@@ -2320,6 +2478,8 @@ function agregar(col, parent){
 function quitar(col, id, parent){
   if (col === 'msi') { const c = state.tarjetas.find(t => t.id === parent); if (c) c.msi = c.msi.filter(x => x.id !== id); }
   else state[col] = state[col].filter(x => x.id !== id);
+  // Al quitar una tarjeta también se van su historial y sus pagos.
+  if (col === 'tarjetas') { state.cortes = state.cortes.filter(k => k.tarjeta !== id); state.pagosTarjeta = state.pagosTarjeta.filter(x => x.tarjeta !== id); }
   if (col === 'ingresos') renderIngresos();
   else if (col === 'gastos') renderGastos();
   else if (col === 'prestamos') renderPrestamosEd();
@@ -2363,6 +2523,9 @@ document.addEventListener('click', e => {
   if (d.tabla) { sim.tabla = d.tabla; renderSim(); return; }
   if (d.metodo) { state.plan.metodo = d.metodo; renderPlan(analisis()); cambiado(); return; }
   if (d.mes) { diarioMes = ymAdd(diarioMes, Number(d.mes)); renderDiario(); return; }
+  if (d.anotarpago) { anotarPago(d.anotarpago); return; }
+  if (d.delpago) { state.pagosTarjeta = state.pagosTarjeta.filter(x => x.id !== d.delpago); renderOutputs(); cambiado(); return; }
+  if (d.delcorte) { dosPasos(b, 'Toca otra vez para quitarlo', () => { state.cortes = state.cortes.filter(k => k.id !== d.delcorte); renderOutputs(); cambiado(); }); return; }
   if (d.delmov) { state.movimientos = state.movimientos.filter(m => m.id !== d.delmov); renderOutputs(); cambiado(); return; }
   if (d.pagado) {
     const p = d.pagado.split('|'), it = listaDe(p[0]).find(x => x.id === p[1]);

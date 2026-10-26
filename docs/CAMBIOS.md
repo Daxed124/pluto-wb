@@ -2,6 +2,25 @@
 
 Del más reciente al más antiguo. Cada versión corresponde a uno o varios commits del repositorio, con su identificador entre paréntesis.
 
+## 26 de octubre de 2026
+
+### Estados de cuenta mes a mes
+- Cada estado de cuenta subido se guarda como un **corte** de la tarjeta: periodo, fecha de corte, fecha límite, pago para no generar intereses, pago mínimo, saldo anterior y compras del periodo. Solo cifras y fechas.
+- Los **pagos a la tarjeta** que aparecen en un estado de cuenta (por ejemplo "BMOVIL.PAGO TDC") se guardan y se aplican al corte anterior. Ese corte queda como *Pagado completo*, *Pagado completo, con retraso*, *Pagaste el mínimo*, *Pago parcial*, *Pago incompleto*, *Sin pago*, *Sin pago registrado* o *Por pagar*.
+- Las devoluciones, bonificaciones y reembolsos ya no cuentan como pagos.
+- **Historial por tarjeta** en la pestaña Tarjetas, con lo que se debía, lo que se pagó, cuándo y cuánto faltó.
+- **Anotar un pago a mano** cuando todavía no llega el siguiente estado de cuenta. Si después ese pago aparece en el estado de cuenta (mismo monto, 3 días de diferencia o menos), el del banco lo reemplaza para no contarlo doble.
+- **Los datos de la tarjeta se actualizan solos** al subir un estado de cuenta, solo si es el más reciente de esa tarjeta. Si se sube uno anterior, se guarda en el historial sin tocar los datos actuales.
+- "Próximos pagos" y la cartera saltan solos al siguiente mes cuando el corte ya quedó pagado.
+- Si se vuelve a subir un estado de cuenta ya cargado, reemplaza al anterior en vez de duplicarlo.
+- Al quitar una tarjeta se borran también su historial y sus pagos.
+
+### Simulador y Plan de pagos más claros
+- Cada pestaña abre con la pregunta que responde.
+- Nuevo bloque **"La respuesta"**: una frase con lo que importa, por ejemplo *"Pagando $2,500 al mes terminas en abr 2028 y pagas $15,180 de intereses"*, o *"Paga el mínimo en todas y lo que sobre mándalo a…"*.
+- Cada tabla y cada gráfica tiene una línea que explica cómo leerla.
+- Las explicaciones de "avalancha" y "bola de nieve" usan palabras más simples.
+
 ## 1 de octubre de 2026
 
 ### Documentación (`f694065`)
